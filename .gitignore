@@ -1,27 +1,30 @@
-# Python
+# Python / FastAPI
 __pycache__/
 *.py[cod]
-*.egg-info/
+*$py.class
+*.pyc
+.env
+hrms.db
 .venv/
 venv/
 env/
 
-# Database & logs
-*.db
-*.db-journal
-*.log
-test-output.txt
+# Node / Frontend
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
 
-# Environment
-.env
-.env.*
-!.env.example
+# Build artifacts
+package-lock.json
 
-# Tooling
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
+# IDE
+.vscode/
+.idea/
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Tests
+.pytest_cache/
