@@ -9,31 +9,40 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.database import init_db
+from app.database import AsyncSessionLocal, init_db
 from app.routers import (
     attendance,
     auth,
     dashboard,
     employees,
+    leave_policies,
     leaves,
     notifications,
     payroll,
+    self_service,
+    users,
 )
+from app.services.leave_balances import ensure_all_employee_balances, ensure_default_policies
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Create tables on startup; nothing to tear down for SQLite file DBs."""
+    """Create/upgrade tables and bootstrap leave policies on startup."""
     await init_db()
+    async with AsyncSessionLocal() as db:
+        await ensure_default_policies(db)
+        await ensure_all_employee_balances(db)
+        await db.commit()
     yield
 
 
 app = FastAPI(
     title=settings.app_name,
-    version="1.0.0",
+    version="2.0.0",
     description=(
-        "Production-ready HRMS backend: Authentication, Employees, Attendance, "
-        "Leaves, Payroll, Dashboard and Notifications."
+        "Role-driven HRMS backend: RBAC, Employee Self-Service, Attendance "
+        "controls, Leave policies/balances, Payroll breakdowns, Admin user "
+        "management, Dashboard analytics and Notifications."
     ),
     lifespan=lifespan,
 )
@@ -49,8 +58,11 @@ app.add_middleware(
 
 # Module routers
 app.include_router(auth.router)
+app.include_router(users.router)
 app.include_router(employees.router)
+app.include_router(self_service.router)
 app.include_router(attendance.router)
+app.include_router(leave_policies.router)
 app.include_router(leaves.router)
 app.include_router(payroll.router)
 app.include_router(dashboard.router)

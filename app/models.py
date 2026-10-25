@@ -81,6 +81,7 @@ class User(Base):
     role: Mapped[UserRole] = mapped_column(
         sa_enum(UserRole, "user_role"), nullable=False, default=UserRole.EMPLOYEE
     )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
     employee: Mapped["Employee | None"] = relationship(
@@ -119,6 +120,9 @@ class Employee(Base):
     payroll_records: Mapped[list["Payroll"]] = relationship(
         back_populates="employee", cascade="all, delete-orphan"
     )
+    leave_balances: Mapped[list["LeaveBalance"]] = relationship(
+        back_populates="employee", cascade="all, delete-orphan"
+    )
 
 
 class Attendance(Base):
@@ -138,6 +142,10 @@ class Attendance(Base):
         default=AttendanceStatus.ABSENT,
     )
     working_hours: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Module 10 — advanced attendance controls
+    is_late: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    late_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    overtime_hours: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     employee: Mapped[Employee] = relationship(back_populates="attendance_records")
 
@@ -166,6 +174,39 @@ class Leave(Base):
     employee: Mapped[Employee] = relationship(back_populates="leaves")
 
 
+class LeavePolicy(Base):
+    """Module 11 — company-wide leave policy per leave type."""
+
+    __tablename__ = "leave_policies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    leave_type: Mapped[LeaveType] = mapped_column(
+        sa_enum(LeaveType, "leave_type"), unique=True, nullable=False
+    )
+    total_days_allowed: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+class LeaveBalance(Base):
+    """Module 11 — per-employee remaining balance for each leave type."""
+
+    __tablename__ = "leave_balances"
+    __table_args__ = (
+        UniqueConstraint("employee_id", "leave_type", name="uq_leave_balance_employee_type"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("employees.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    leave_type: Mapped[LeaveType] = mapped_column(
+        sa_enum(LeaveType, "leave_type"), nullable=False
+    )
+    remaining_days: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    employee: Mapped[Employee] = relationship(back_populates="leave_balances")
+
+
 class Payroll(Base):
     __tablename__ = "payroll"
     __table_args__ = (UniqueConstraint("employee_id", "month", name="uq_payroll_employee_month"),)
@@ -175,6 +216,7 @@ class Payroll(Base):
         ForeignKey("employees.id", ondelete="CASCADE"), nullable=False, index=True
     )
     basic_salary: Mapped[float] = mapped_column(Float, nullable=False)
+    allowances: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     deductions: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     bonus: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     net_salary: Mapped[float] = mapped_column(Float, nullable=False)

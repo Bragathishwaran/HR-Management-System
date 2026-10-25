@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Notification
+from app.models import Notification, User, UserRole
 
 
 async def create_notification(
@@ -62,6 +64,24 @@ async def notify_payroll_generated(
             f"Net pay: {net_salary:,.2f}."
         ),
     )
+
+
+async def notify_staff(
+    db: AsyncSession,
+    *,
+    title: str,
+    message: str,
+    roles: Iterable[UserRole] = (UserRole.HR, UserRole.ADMIN),
+    exclude_user_id: int | None = None,
+) -> int:
+    """Fan a notification out to every active user with a staff role."""
+    stmt = select(User.id).where(User.role.in_(list(roles)), User.is_active.is_(True))
+    if exclude_user_id is not None:
+        stmt = stmt.where(User.id != exclude_user_id)
+    recipient_ids = list((await db.scalars(stmt)).all())
+    for user_id in recipient_ids:
+        await create_notification(db, user_id=user_id, title=title, message=message)
+    return len(recipient_ids)
 
 
 async def count_unread(db: AsyncSession, user_id: int) -> int:

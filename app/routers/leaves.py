@@ -11,9 +11,15 @@ from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.dependencies import get_current_user, get_employee_profile, require_staff
-from app.models import Employee, Leave, LeaveStatus, User, UserRole
-from app.schemas import LeaveApply, LeaveRead, LeaveStatusUpdate
-from app.services.notifications import notify_leave_status
+from app.models import Employee, Leave, LeaveBalance, LeaveStatus, User, UserRole
+from app.schemas import LeaveApply, LeaveBalanceRead, LeaveRead, LeaveStatusUpdate
+from app.services.leave_balances import (
+    ensure_employee_balances,
+    get_employee_balance,
+    get_policy_map,
+    leave_days,
+)
+from app.services.notifications import notify_leave_status, notify_staff
 
 router = APIRouter(
     prefix="/leaves",
@@ -48,6 +54,17 @@ async def apply_leave(
             detail="You already have a pending or approved leave overlapping these dates.",
         )
 
+    requested_days = leave_days(payload.start_date, payload.end_date)
+    balance = await get_employee_balance(db, employee.id, payload.leave_type)
+    if requested_days > balance.remaining_days:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Insufficient {payload.leave_type.value} leave balance: "
+                f"requested {requested_days} day(s), available {balance.remaining_days}."
+            ),
+        )
+
     leave = Leave(
         employee_id=employee.id,
         leave_type=payload.leave_type,
@@ -57,6 +74,16 @@ async def apply_leave(
         status=LeaveStatus.PENDING,
     )
     db.add(leave)
+    await notify_staff(
+        db,
+        title="New leave request",
+        message=(
+            f"{employee.full_name} requested {requested_days} day(s) of "
+            f"{payload.leave_type.value} leave from {payload.start_date} "
+            f"to {payload.end_date}."
+        ),
+        exclude_user_id=employee.user_id,
+    )
     await db.commit()
     await db.refresh(leave)
     return leave
@@ -101,6 +128,69 @@ async def list_leaves(
     return list((await db.scalars(stmt)).all())
 
 
+@router.get(
+    "/balances",
+    response_model=list[LeaveBalanceRead],
+    summary="Leave balances (own for employees, all/filterable for HR/Admin)",
+)
+async def leave_balances(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    employee_id: Optional[int] = Query(
+        default=None, gt=0, description="HR/Admin only filter"
+    ),
+) -> list[LeaveBalanceRead]:
+    is_staff = current_user.role in (UserRole.HR, UserRole.ADMIN)
+
+    if is_staff and employee_id is None:
+        stmt = select(LeaveBalance).options(selectinload(LeaveBalance.employee))
+    else:
+        if is_staff:
+            employee = await db.get(Employee, employee_id)
+            if employee is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Employee {employee_id} not found",
+                )
+            target_id = employee.id
+        else:
+            own = await db.scalar(
+                select(Employee).where(Employee.user_id == current_user.id)
+            )
+            if own is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="No employee profile is linked to this account.",
+                )
+            target_id = own.id
+        await ensure_employee_balances(db, target_id)
+        stmt = (
+            select(LeaveBalance)
+            .options(selectinload(LeaveBalance.employee))
+            .where(LeaveBalance.employee_id == target_id)
+        )
+
+    policies = await get_policy_map(db)
+    balances = (await db.scalars(stmt.order_by(LeaveBalance.leave_type))).all()
+    return [
+        LeaveBalanceRead(
+            id=balance.id,
+            employee_id=balance.employee_id,
+            leave_type=balance.leave_type,
+            remaining_days=balance.remaining_days,
+            total_days_allowed=(
+                policies[balance.leave_type].total_days_allowed
+                if balance.leave_type in policies
+                else None
+            ),
+            employee_name=(
+                balance.employee.full_name if balance.employee is not None else None
+            ),
+        )
+        for balance in balances
+    ]
+
+
 @router.patch(
     "/{leave_id}/status",
     response_model=LeaveRead,
@@ -127,6 +217,20 @@ async def update_leave_status(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Only PENDING requests can be processed (current: {leave.status.value}).",
         )
+
+    requested_days = leave_days(leave.start_date, leave.end_date)
+    if payload.status == LeaveStatus.APPROVED:
+        balance = await get_employee_balance(db, leave.employee_id, leave.leave_type)
+        if requested_days > balance.remaining_days:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Insufficient {leave.leave_type.value} leave balance: "
+                    f"requested {requested_days} day(s), available {balance.remaining_days}."
+                ),
+            )
+        # Deduct only on approval (rejections leave the balance untouched).
+        balance.remaining_days -= requested_days
 
     leave.status = payload.status
     # Trigger the notification before commit so it is atomic with the decision.

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import Select, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -14,6 +14,7 @@ from app.dependencies import get_current_user, require_staff
 from app.models import Employee, EmployeeStatus, User, UserRole, utcnow
 from app.schemas import EmployeeCreate, EmployeeRead, EmployeeUpdate, UserCredentials
 from app.security import hash_password
+from app.services.leave_balances import ensure_employee_balances
 
 router = APIRouter(
     prefix="/employees",
@@ -107,6 +108,9 @@ async def create_employee(
         status=payload.status,
     )
     db.add(employee)
+    await db.flush()
+    # Seed this employee's leave balances from the active policies.
+    await ensure_employee_balances(db, employee.id)
     await db.commit()
     employee = await _get_employee_or_404(db, employee.id)
     return _to_read(employee, include_salary=True)
@@ -168,6 +172,14 @@ async def get_employee(
     current_user: User = Depends(get_current_user),
 ) -> EmployeeRead:
     employee = await _get_employee_or_404(db, employee_id)
+    if (
+        current_user.role == UserRole.EMPLOYEE
+        and employee.user_id != current_user.id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only view your own employee profile.",
+        )
     include_salary = current_user.role in (UserRole.HR, UserRole.ADMIN)
     return _to_read(employee, include_salary=include_salary)
 
@@ -195,3 +207,19 @@ async def update_employee(
     await db.commit()
     employee = await _get_employee_or_404(db, employee.id)
     return _to_read(employee, include_salary=True)
+
+
+@router.delete(
+    "/{employee_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete an employee profile (HR/Admin)",
+)
+async def delete_employee(
+    employee_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_staff),
+) -> Response:
+    employee = await _get_employee_or_404(db, employee_id)
+    await db.delete(employee)
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

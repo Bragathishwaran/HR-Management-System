@@ -106,6 +106,11 @@ def run_suite() -> int:
         s.check(r.status_code == 200 and "access_token" in r.json(), "admin login returns JWT")
         admin_headers = {"Authorization": f"Bearer {r.json()['access_token']}"}
 
+        r = client.post("/auth/token", data={"username": "admin@worksphere.io",
+                                            "password": "Admin!Pass123"})
+        s.check(r.status_code == 200 and "access_token" in r.json(),
+                "login accepts email address", r.text)
+
         r = client.post("/auth/token", data={"username": "emp1", "password": EMPLOYEE_PW})
         s.check(r.status_code == 200, "employee login")
         emp_headers = {"Authorization": f"Bearer {r.json()['access_token']}"}
@@ -366,6 +371,23 @@ def run_suite() -> int:
         r = client.get("/dashboard/stats", headers=emp_headers)
         s.check(r.status_code == 403, "employee blocked from dashboard (403)", r.text)
 
+        r = client.get("/dashboard/trends", headers=admin_headers)
+        trends = r.json()
+        s.check(r.status_code == 200 and len(trends["attendance_trend"]) == 7
+                and trends["attendance_trend"][-1]["half_day"] == 1,
+                "dashboard attendance trend (7 days)", r.text)
+        s.check(trends["leave_breakdown"] == {"pending": 0, "approved": 1, "rejected": 0},
+                "dashboard leave breakdown", str(trends.get("leave_breakdown")))
+        s.check(len(trends["payroll_trend"]) == 2
+                and {p["month"] for p in trends["payroll_trend"]}
+                == {"October-2026", "Oct-2026"}
+                and sum(p["records"] for p in trends["payroll_trend"]) == 2
+                and sum(d["count"] for d in trends["department_distribution"]) == 2,
+                "dashboard payroll trend + department split", str(trends))
+
+        r = client.get("/dashboard/trends", headers=emp_headers)
+        s.check(r.status_code == 403, "employee blocked from dashboard trends (403)", r.text)
+
         # ------------------------------------------------------------------
         # Module 7 — Notifications
         # ------------------------------------------------------------------
@@ -396,6 +418,265 @@ def run_suite() -> int:
         s.check(r.status_code == 200 and r.json()["total"] == 1
                 and "payroll" in r.json()["items"][0]["title"].lower(),
                 "bob received only his payroll notification", r.text)
+
+        r = client.patch("/notifications/read-all", headers=alice_headers)
+        s.check(r.status_code == 200 and r.json()["updated"] >= 1,
+                "mark all notifications as read", r.text)
+
+        r = client.get("/notifications/?unread_only=true", headers=alice_headers)
+        s.check(r.status_code == 200 and r.json()["unread"] == 0
+                and r.json()["items"] == [],
+                "read-all clears the unread inbox", r.text)
+
+        # ------------------------------------------------------------------
+        # Module 8 + 13 — RBAC hardening & Admin user management
+        # ------------------------------------------------------------------
+        print("\n[Module 8/13] RBAC & User Management")
+        r = client.get("/users/", headers=emp_headers)
+        s.check(r.status_code == 403, "employee cannot list users (403)", r.text)
+
+        r = client.get("/users/", headers=hr_headers)
+        s.check(r.status_code == 403, "HR cannot list users (403)", r.text)
+
+        r = client.get("/users/", headers=admin_headers)
+        s.check(r.status_code == 200 and len(r.json()) >= 4
+                and {u["role"] for u in r.json()} >= {"ADMIN", "HR", "EMPLOYEE"},
+                "admin lists users with roles", r.text)
+
+        r = client.post("/users/", headers=admin_headers, json={
+            "username": "charlie", "email": "charlie@worksphere.io",
+            "password": EMPLOYEE_PW, "role": "EMPLOYEE"})
+        s.check(r.status_code == 201 and r.json()["role"] == "EMPLOYEE"
+                and r.json()["is_active"] is True,
+                "admin creates user account", r.text)
+        charlie_id = r.json()["id"]
+
+        r = client.post("/auth/token", data={"username": "charlie", "password": EMPLOYEE_PW})
+        charlie_headers = {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+        r = client.patch(f"/users/{charlie_id}", headers=admin_headers,
+                         json={"role": "HR"})
+        s.check(r.status_code == 200 and r.json()["role"] == "HR",
+                "admin assigns HR role", r.text)
+
+        r = client.get("/auth/me", headers=charlie_headers)
+        s.check(r.status_code == 401,
+                "stale token rejected after role change", r.text)
+
+        r = client.post("/auth/token", data={"username": "charlie", "password": EMPLOYEE_PW})
+        charlie_headers = {"Authorization": f"Bearer {r.json()['access_token']}"}
+        r = client.get("/users/", headers=charlie_headers)
+        s.check(r.status_code == 403, "new HR role still cannot manage users", r.text)
+
+        r = client.patch(f"/users/{charlie_id}", headers=admin_headers,
+                         json={"is_active": False})
+        s.check(r.status_code == 200 and r.json()["is_active"] is False,
+                "admin deactivates user", r.text)
+        r = client.post("/auth/token", data={"username": "charlie", "password": EMPLOYEE_PW})
+        s.check(r.status_code == 403, "deactivated user cannot log in", r.text)
+        r = client.get("/auth/me", headers=charlie_headers)
+        s.check(r.status_code == 403, "deactivated user's token is rejected", r.text)
+
+        r = client.patch(f"/users/{charlie_id}", headers=admin_headers,
+                         json={"is_active": True})
+        s.check(r.status_code == 200 and r.json()["is_active"] is True,
+                "admin reactivates user", r.text)
+
+        me = client.get("/auth/me", headers=admin_headers).json()
+        r = client.patch(f"/users/{me['id']}", headers=admin_headers,
+                         json={"is_active": False})
+        s.check(r.status_code == 400, "admin cannot deactivate self", r.text)
+        r = client.patch(f"/users/{me['id']}", headers=admin_headers,
+                         json={"role": "HR"})
+        s.check(r.status_code == 400, "admin cannot demote self", r.text)
+        r = client.delete(f"/users/{me['id']}", headers=admin_headers)
+        s.check(r.status_code == 400, "admin cannot delete self", r.text)
+
+        r = client.post("/users/", headers=hr_headers, json={
+            "username": "nope", "email": "nope@x.io",
+            "password": EMPLOYEE_PW, "role": "EMPLOYEE"})
+        s.check(r.status_code == 403, "HR cannot create users (403)", r.text)
+
+        r = client.get(f"/employees/{bob_id}", headers=alice_headers)
+        s.check(r.status_code == 403,
+                "employee cannot view another employee profile", r.text)
+        r = client.get(f"/employees/{bob_id}", headers=hr_headers)
+        s.check(r.status_code == 200, "HR can view employee profiles", r.text)
+
+        # ------------------------------------------------------------------
+        # Module 9 — Employee Self-Service Portal
+        # ------------------------------------------------------------------
+        print("\n[Module 9] Employee Self-Service")
+        r = client.get("/me/profile", headers=alice_headers)
+        s.check(r.status_code == 200 and r.json()["username"] == "alice"
+                and r.json()["salary"] == 95000,
+                "self-service profile exposes own salary", r.text)
+
+        r = client.get("/me/attendance", headers=alice_headers)
+        s.check(r.status_code == 200 and len(r.json()) == 1,
+                "self-service attendance history", r.text)
+
+        r = client.get("/me/leaves", headers=alice_headers)
+        s.check(r.status_code == 200 and len(r.json()) == 1,
+                "self-service leave tracking", r.text)
+
+        r = client.get("/me/payroll", headers=alice_headers)
+        s.check(r.status_code == 200 and len(r.json()) == 1,
+                "self-service payroll history", r.text)
+
+        r = client.get("/me/balances", headers=alice_headers)
+        sick = next(b for b in r.json() if b["leave_type"] == "SICK")
+        s.check(r.status_code == 200 and sick["remaining_days"] == 9
+                and sick["total_days_allowed"] == 12,
+                "leave balance 12 - 3 approved days = 9", r.text)
+
+        r = client.get("/me/dashboard", headers=alice_headers)
+        dash = r.json()
+        s.check(r.status_code == 200 and dash["profile"]["username"] == "alice"
+                and dash["today_attendance"]["status"] == "HALF_DAY"
+                and dash["pending_leave_requests"] == 0
+                and dash["latest_payroll"]["month"] == "October-2026",
+                "self-service dashboard aggregates portal data", r.text)
+
+        r = client.get("/me/profile", headers=charlie_headers)
+        s.check(r.status_code == 400,
+                "user without employee profile gets a clear error", r.text)
+
+        # ------------------------------------------------------------------
+        # Module 10 — Advanced Attendance Controls
+        # ------------------------------------------------------------------
+        print("\n[Module 10] Advanced Attendance")
+        r = client.post("/attendance/check-in", headers=bob_headers)
+        s.check(r.status_code == 201 and "is_late" in r.json()["attendance"]
+                and "late_minutes" in r.json()["attendance"],
+                "check-in records late/on-time indicators", r.text)
+        r = client.post("/attendance/check-in", headers=bob_headers)
+        s.check(r.status_code == 400, "multiple check-ins per day prevented", r.text)
+
+        r = client.get("/attendance/today", headers=bob_headers)
+        s.check(r.status_code == 200 and r.json()["check_in"] is not None,
+                "today's attendance endpoint", r.text)
+
+        r = client.post("/attendance/check-out", headers=bob_headers)
+        s.check(r.status_code == 200 and r.json()["attendance"]["overtime_hours"] >= 0,
+                "check-out calculates overtime hours", r.text)
+
+        r = client.post("/attendance/auto-mark-absent", headers=hr_headers,
+                        json=None, params={"date": "2020-01-01"})
+        absent = r.json()
+        s.check(r.status_code == 200 and absent["created"] == 2
+                and set(absent["employee_ids"]) == {alice_id, bob_id},
+                "HR auto-marks missing employees absent", r.text)
+
+        r = client.post("/attendance/auto-mark-absent", headers=hr_headers,
+                        params={"date": "2020-01-01"})
+        s.check(r.status_code == 200 and r.json()["created"] == 0
+                and r.json()["skipped_existing"] == 2,
+                "absent sweep is idempotent", r.text)
+
+        r = client.post("/attendance/auto-mark-absent", headers=emp_headers)
+        s.check(r.status_code == 403, "employee cannot run absence sweep", r.text)
+
+        r = client.post("/attendance/auto-mark-absent", headers=hr_headers,
+                        params={"date": "2999-01-01"})
+        s.check(r.status_code == 400, "future absence sweep rejected", r.text)
+
+        # ------------------------------------------------------------------
+        # Module 11 — Leave Policies & Balances
+        # ------------------------------------------------------------------
+        print("\n[Module 11] Leave Policies & Balances")
+        r = client.get("/leave-policies/", headers=alice_headers)
+        s.check(r.status_code == 200 and len(r.json()) == 3,
+                "employee can view leave policies", r.text)
+        s.check({p["leave_type"] for p in r.json()} == {"SICK", "CASUAL", "PAID"},
+                "all leave types have policies", r.text)
+
+        r = client.put("/leave-policies/SICK", headers=emp_headers,
+                       json={"total_days_allowed": 30})
+        s.check(r.status_code == 403, "employee cannot edit leave policy", r.text)
+
+        r = client.put("/leave-policies/SICK", headers=hr_headers,
+                       json={"total_days_allowed": 15})
+        s.check(r.status_code == 200 and r.json()["total_days_allowed"] == 15,
+                "HR updates leave policy allocation", r.text)
+
+        r = client.post("/leave-policies/", headers=hr_headers,
+                        json={"leave_type": "SICK", "total_days_allowed": 10})
+        s.check(r.status_code == 400, "duplicate policy rejected", r.text)
+
+        r = client.post("/leaves/apply", headers=alice_headers, json={
+            "leave_type": "PAID", "start_date": "2027-01-01",
+            "end_date": "2027-01-21", "reason": "Long break"})
+        s.check(r.status_code == 400, "leave over-usage blocked by balance", r.text)
+
+        r = client.get(f"/leaves/balances?employee_id={alice_id}", headers=hr_headers)
+        s.check(r.status_code == 200 and len(r.json()) == 3
+                and all(b["employee_name"] == "Alice Sharma" for b in r.json()),
+                "HR views an employee's leave balances", r.text)
+
+        # ------------------------------------------------------------------
+        # Module 12 — Payroll Enhancements
+        # ------------------------------------------------------------------
+        print("\n[Module 12] Payroll Enhancements")
+        r = client.post("/payroll/generate", headers=hr_headers, json={
+            "employee_id": alice_id, "month": "November-2026",
+            "basic_salary": 95000, "allowances": 2500, "bonus": 500,
+            "deductions": 1000})
+        s.check(r.status_code == 201 and r.json()["net_salary"] == 97000.0
+                and r.json()["allowances"] == 2500
+                and r.json()["gross_salary"] == 98000.0
+                and r.json()["breakdown"]["net_salary"] == 97000.0,
+                "payroll breakdown basic/allowances/bonus/deductions", r.text)
+        november_payroll_id = r.json()["id"]
+
+        r = client.get("/payroll/summary?month=November-2026", headers=emp_headers)
+        s.check(r.status_code == 403, "employee cannot view payroll summary", r.text)
+
+        r = client.get("/payroll/summary?month=November-2026", headers=hr_headers)
+        summary = r.json()
+        s.check(r.status_code == 200 and summary["employees_paid"] == 1
+                and summary["total_basic"] == 95000.0
+                and summary["total_allowances"] == 2500.0
+                and summary["total_deductions"] == 1000.0
+                and summary["total_net"] == 97000.0,
+                "monthly payroll summary totals", r.text)
+
+        r = client.get(f"/payroll/{november_payroll_id}", headers=alice_headers)
+        s.check(r.status_code == 200 and r.json()["employee_name"] == "Alice Sharma"
+                and r.json()["breakdown"]["gross_salary"] == 98000.0,
+                "detailed payslip for own record", r.text)
+
+        r = client.get(f"/payroll/{november_payroll_id}", headers=bob_headers)
+        s.check(r.status_code == 403,
+                "employee cannot view another employee's payslip", r.text)
+
+        r = client.get("/payroll/summary?month=October-2026", headers=admin_headers)
+        s.check(r.status_code == 200 and r.json()["employees_paid"] == 1
+                and r.json()["total_allowances"] == 0.0
+                and r.json()["total_net"] == 97500.0,
+                "admin payroll summary (legacy record uses allowances=0)", r.text)
+
+        # ------------------------------------------------------------------
+        # Admin Controls — System Analytics
+        # ------------------------------------------------------------------
+        print("\n[Admin] System-wide Analytics")
+        r = client.get("/dashboard/analytics", headers=admin_headers)
+        analytics = r.json()
+        s.check(r.status_code == 200 and analytics["total_employees"] == 2
+                and analytics["total_users"] == 6
+                and analytics["active_users"] == 6
+                and analytics["users_by_role"]["ADMIN"] == 1
+                and analytics["users_by_role"]["HR"] == 2,
+                "admin system-wide analytics", r.text)
+
+        r = client.get("/dashboard/analytics", headers=hr_headers)
+        s.check(r.status_code == 403, "HR blocked from admin analytics", r.text)
+
+        r = client.get("/dashboard/stats", headers=hr_headers)
+        s.check(r.status_code == 200, "HR retains operational dashboard", r.text)
+
+        r = client.delete(f"/users/{charlie_id}", headers=admin_headers)
+        s.check(r.status_code == 204, "admin deletes user account", r.text)
 
     return s.summary()
 

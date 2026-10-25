@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, OAuth2PasswordRequestForm
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -101,13 +101,26 @@ async def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
-    """OAuth2 password grant — accepts `username` + `password` form fields."""
-    user = await db.scalar(select(User).where(User.username == form_data.username))
+    """OAuth2 password grant.
+
+    The ``username`` form field accepts either a username or an email address.
+    """
+    identifier = form_data.username.strip()
+    user = await db.scalar(
+        select(User).where(
+            or_(User.username == identifier, User.email == identifier.lower())
+        )
+    )
     if user is None or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
+        )
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account has been deactivated. Contact an administrator.",
         )
 
     token = create_access_token(

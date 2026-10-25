@@ -17,6 +17,18 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = Field(default=60, ge=5, le=1440)
 
+    # Attendance rules (Module 10)
+    work_start_hour: int = Field(default=9, ge=0, le=23)
+    work_start_minute: int = Field(default=0, ge=0, le=59)
+    late_grace_minutes: int = Field(default=15, ge=0, le=120)
+    standard_work_hours: float = Field(default=8.0, gt=0, le=24)
+    half_day_threshold_hours: float = Field(default=4.0, gt=0, le=24)
+
+    # Default yearly leave allocations (Module 11)
+    default_sick_leave_days: int = Field(default=12, ge=0, le=365)
+    default_casual_leave_days: int = Field(default=12, ge=0, le=365)
+    default_paid_leave_days: int = Field(default=20, ge=0, le=365)
+
     # Database (async SQLite driver)
     database_url: str = "sqlite+aiosqlite:///./hrms.db"
 
@@ -24,6 +36,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = [
         "http://localhost:3000",
         "http://localhost:5173",
+        "http://localhost:4173",
     ]
 
     model_config = SettingsConfigDict(

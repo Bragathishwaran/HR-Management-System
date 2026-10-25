@@ -1,28 +1,36 @@
-"""Module 3 — Attendance Management (check-in / check-out / history)."""
+"""Module 3 + 10 — Attendance (check-in/out, late, overtime, absence sweep)."""
 
 from __future__ import annotations
 
 from datetime import date as date_type
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.dependencies import get_current_user, get_employee_profile, require_staff
-from app.models import Attendance, AttendanceStatus, Employee, User, UserRole
-from app.schemas import AttendanceRead, CheckInOutResponse
+from app.models import (
+    Attendance,
+    AttendanceStatus,
+    Employee,
+    EmployeeStatus,
+    Leave,
+    LeaveStatus,
+    User,
+    UserRole,
+)
+from app.schemas import AttendanceRead, AutoMarkAbsentResponse, CheckInOutResponse
+from app.services.notifications import create_notification, notify_staff
 
 router = APIRouter(
     prefix="/attendance",
     tags=["Attendance"],
     dependencies=[Depends(get_current_user)],
 )
-
-# Hours below this threshold on check-out count as a HALF_DAY.
-HALF_DAY_THRESHOLD_HOURS = 4.0
 
 
 def _utc_now_naive() -> datetime:
@@ -31,6 +39,22 @@ def _utc_now_naive() -> datetime:
 
 def _today_utc() -> date_type:
     return datetime.now(timezone.utc).date()
+
+
+def _late_minutes(check_in: datetime) -> int:
+    """Minutes past the configured start time (0 when within the grace period)."""
+    scheduled_start = datetime.combine(
+        check_in.date(), time(settings.work_start_hour, settings.work_start_minute)
+    )
+    grace_cutoff = scheduled_start + timedelta(minutes=settings.late_grace_minutes)
+    if check_in <= grace_cutoff:
+        return 0
+    return max(0, int((check_in - scheduled_start).total_seconds() // 60))
+
+
+def _overtime_hours(working_hours: float) -> float:
+    """Hours worked beyond the standard work day (0 when none)."""
+    return round(max(0.0, working_hours - settings.standard_work_hours), 2)
 
 
 @router.post(
@@ -49,31 +73,59 @@ async def check_in(
             Attendance.employee_id == employee.id, Attendance.date == today
         )
     )
-    if existing is not None:
+    if existing is not None and existing.check_in is not None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="You have already checked in today.",
         )
 
-    record = Attendance(
-        employee_id=employee.id,
-        check_in=_utc_now_naive(),
-        date=today,
-        status=AttendanceStatus.PRESENT,
-    )
-    db.add(record)
+    now = _utc_now_naive()
+    late_minutes = _late_minutes(now)
+    if existing is not None:
+        # Convert a previously auto-marked ABSENT row into the real check-in.
+        record = existing
+        record.check_in = now
+        record.check_out = None
+        record.status = AttendanceStatus.PRESENT
+    else:
+        record = Attendance(
+            employee_id=employee.id,
+            check_in=now,
+            date=today,
+            status=AttendanceStatus.PRESENT,
+        )
+        db.add(record)
+    record.is_late = late_minutes > 0
+    record.late_minutes = late_minutes
+    record.overtime_hours = None
+
+    if late_minutes > 0:
+        await notify_staff(
+            db,
+            title="Late check-in",
+            message=(
+                f"{employee.full_name} checked in {late_minutes} minute(s) late "
+                f"at {now:%H:%M} UTC on {today}."
+            ),
+            exclude_user_id=employee.user_id,
+        )
+
     await db.commit()
     await db.refresh(record)
+    detail = (
+        f"Checked in at {record.check_in:%H:%M UTC} — late by {late_minutes} min."
+        if late_minutes
+        else f"Checked in at {record.check_in:%H:%M UTC} — on time."
+    )
     return CheckInOutResponse(
-        attendance=AttendanceRead.model_validate(record),
-        message=f"Checked in at {record.check_in:%H:%M UTC}.",
+        attendance=AttendanceRead.model_validate(record), message=detail
     )
 
 
 @router.post(
     "/check-out",
     response_model=CheckInOutResponse,
-    summary="Record check-out and calculate working hours",
+    summary="Record check-out and calculate working/overtime hours",
 )
 async def check_out(
     db: AsyncSession = Depends(get_db),
@@ -85,7 +137,7 @@ async def check_out(
             Attendance.employee_id == employee.id, Attendance.date == today
         )
     )
-    if record is None:
+    if record is None or record.check_in is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="You must check in before checking out.",
@@ -100,14 +152,122 @@ async def check_out(
     hours = (check_out_time - record.check_in).total_seconds() / 3600
     record.check_out = check_out_time
     record.working_hours = round(hours, 2)
+    record.overtime_hours = _overtime_hours(hours)
     record.status = (
-        AttendanceStatus.PRESENT if hours >= HALF_DAY_THRESHOLD_HOURS else AttendanceStatus.HALF_DAY
+        AttendanceStatus.PRESENT
+        if hours >= settings.half_day_threshold_hours
+        else AttendanceStatus.HALF_DAY
     )
     await db.commit()
     await db.refresh(record)
     return CheckInOutResponse(
         attendance=AttendanceRead.model_validate(record),
         message=f"Checked out after {record.working_hours} working hours.",
+    )
+
+
+@router.get(
+    "/today",
+    response_model=Optional[AttendanceRead],
+    summary="Current employee's attendance for today",
+)
+async def today_attendance(
+    db: AsyncSession = Depends(get_db),
+    employee: Employee = Depends(get_employee_profile),
+) -> Attendance | None:
+    return await db.scalar(
+        select(Attendance).where(
+            Attendance.employee_id == employee.id, Attendance.date == _today_utc()
+        )
+    )
+
+
+@router.post(
+    "/auto-mark-absent",
+    response_model=AutoMarkAbsentResponse,
+    summary="Auto-mark active employees absent for a day (HR/Admin)",
+)
+async def auto_mark_absent(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_staff),
+    target_date: Optional[date_type] = Query(
+        default=None,
+        alias="date",
+        description="Day to sweep (defaults to today; future dates are rejected)",
+    ),
+) -> AutoMarkAbsentResponse:
+    day = target_date or _today_utc()
+    if day > _today_utc():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot mark attendance for a future date.",
+        )
+
+    active_employees = list(
+        (
+            await db.scalars(
+                select(Employee).where(Employee.status == EmployeeStatus.ACTIVE)
+            )
+        ).all()
+    )
+    active_ids = [employee.id for employee in active_employees]
+    employee_map = {employee.id: employee for employee in active_employees}
+    marked_ids = set(
+        (
+            await db.scalars(
+                select(Attendance.employee_id).where(Attendance.date == day)
+            )
+        ).all()
+    )
+    on_leave_ids = set(
+        (
+            await db.scalars(
+                select(Leave.employee_id).where(
+                    Leave.status == LeaveStatus.APPROVED,
+                    Leave.start_date <= day,
+                    Leave.end_date >= day,
+                )
+            )
+        ).all()
+    )
+
+    created_ids: list[int] = []
+    skipped_on_leave = 0
+    for employee_id in active_ids:
+        if employee_id in marked_ids:
+            continue
+        if employee_id in on_leave_ids:
+            skipped_on_leave += 1
+            continue
+        db.add(
+            Attendance(
+                employee_id=employee_id,
+                date=day,
+                status=AttendanceStatus.ABSENT,
+                is_late=False,
+                late_minutes=None,
+                overtime_hours=None,
+            )
+        )
+        created_ids.append(employee_id)
+        absent_employee = employee_map[employee_id]
+        await create_notification(
+            db,
+            user_id=absent_employee.user_id,
+            title="Attendance marked absent",
+            message=(
+                f"You have been marked absent for {day}. "
+                "Contact HR if you were on approved leave or worked remotely."
+            ),
+        )
+
+    await db.commit()
+    return AutoMarkAbsentResponse(
+        date=day,
+        created=len(created_ids),
+        skipped_existing=len(marked_ids),
+        skipped_on_leave=skipped_on_leave,
+        employee_ids=created_ids,
     )
 
 

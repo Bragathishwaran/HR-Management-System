@@ -8,6 +8,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.models import Employee, User, UserRole
@@ -40,6 +41,16 @@ async def get_current_user(
     user = await db.get(User, int(payload["sub"]))
     if user is None:
         raise _unauthorized("User account no longer exists")
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account has been deactivated.",
+        )
+    # Roles are re-validated against the DB on every request: a stale token
+    # issued before a role change must not retain its old privileges.
+    token_role = payload.get("role")
+    if token_role != user.role.value:
+        raise _unauthorized("Your role has changed. Please sign in again.")
     return user
 
 
@@ -69,7 +80,9 @@ async def get_employee_profile(
 ) -> Employee:
     """Resolve the employee profile linked to the current user (if any)."""
     employee = await db.scalar(
-        select(Employee).where(Employee.user_id == current_user.id)
+        select(Employee)
+        .options(selectinload(Employee.user))
+        .where(Employee.user_id == current_user.id)
     )
     if employee is None:
         raise HTTPException(

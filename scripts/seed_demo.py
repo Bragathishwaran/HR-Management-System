@@ -32,6 +32,7 @@ from app.models import (
     utcnow,
 )
 from app.security import hash_password
+from app.services.leave_balances import ensure_default_policies, ensure_employee_balances
 
 PASSWORD = "Passw0rd!123"
 
@@ -63,6 +64,7 @@ async def get_or_create_employee(db, user: User, **kwargs) -> Employee:
 async def seed() -> None:
     await init_db()
     async with AsyncSessionLocal() as db:
+        await ensure_default_policies(db)
         admin = await get_or_create_user(db, "admin1", "admin1@worksphere.io", UserRole.ADMIN)
         hr = await get_or_create_user(db, "hr1", "hr1@worksphere.io", UserRole.HR)
         alice_user = await get_or_create_user(db, "alice", "alice@worksphere.io", UserRole.EMPLOYEE)
@@ -89,6 +91,9 @@ async def seed() -> None:
             status=EmployeeStatus.ACTIVE,
         )
 
+        await ensure_employee_balances(db, alice.id)
+        await ensure_employee_balances(db, bob.id)
+
         today = datetime.now().date()
         if not await db.scalar(
             select(Attendance.id).where(Attendance.employee_id == alice.id, Attendance.date == today)
@@ -101,6 +106,9 @@ async def seed() -> None:
                     date=today,
                     status=AttendanceStatus.PRESENT,
                     working_hours=8.75,
+                    is_late=False,
+                    late_minutes=0,
+                    overtime_hours=0.75,
                 )
             )
 
@@ -124,9 +132,10 @@ async def seed() -> None:
                 Payroll(
                     employee_id=alice.id,
                     basic_salary=95000.0,
+                    allowances=3000.0,
                     deductions=5000.0,
                     bonus=7500.0,
-                    net_salary=97500.0,
+                    net_salary=100500.0,
                     month=month,
                     created_at=utcnow(),
                 )
