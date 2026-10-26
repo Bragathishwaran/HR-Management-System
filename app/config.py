@@ -29,6 +29,21 @@ class Settings(BaseSettings):
     default_casual_leave_days: int = Field(default=12, ge=0, le=365)
     default_paid_leave_days: int = Field(default=20, ge=0, le=365)
 
+    # Module 14 — shift automation
+    auto_attendance_enabled: bool = False
+    auto_attendance_interval_minutes: int = Field(default=60, ge=5, le=1440)
+
+    # Module 15 — leave calendar / team conflict guard (0 disables the cap)
+    max_concurrent_department_leave: int = Field(default=0, ge=0, le=100)
+
+    # Module 16 — secure document storage
+    document_storage_path: str = "storage/documents"
+    max_document_size_mb: int = Field(default=10, ge=1, le=100)
+    allowed_document_extensions: str = "pdf,png,jpg,jpeg,doc,docx"
+
+    # Module 19 — document expiry alerts
+    document_expiry_warning_days: int = Field(default=30, ge=1, le=365)
+
     # Database (async SQLite driver)
     database_url: str = "sqlite+aiosqlite:///./hrms.db"
 

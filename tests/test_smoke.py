@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Use an isolated database BEFORE importing the app (settings are read at import).
@@ -15,6 +16,7 @@ _TMP_DIR = Path(tempfile.mkdtemp(prefix="hrms_test_"))
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DIR / 'test_hrms.db'}"
 os.environ["SECRET_KEY"] = "test-secret-key-for-automated-tests-0123456789abcdef"
 os.environ["ENVIRONMENT"] = "test"
+os.environ["DOCUMENT_STORAGE_PATH"] = str(_TMP_DIR / "documents")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -677,6 +679,571 @@ def run_suite() -> int:
 
         r = client.delete(f"/users/{charlie_id}", headers=admin_headers)
         s.check(r.status_code == 204, "admin deletes user account", r.text)
+
+        # ==================================================================
+        # Phase 3 — Modules 14–20
+        # ==================================================================
+        today = datetime.now(timezone.utc).date()
+        today_str = today.isoformat()
+        expiry_str = (today + timedelta(days=10)).isoformat()
+
+        # ------------------------------------------------------------------
+        # Module 14 — Shifts & automated attendance
+        # ------------------------------------------------------------------
+        print("\n[Module 14] Shifts & Automated Attendance")
+        r = client.get("/shifts/", headers=alice_headers)
+        shifts = r.json()
+        s.check(
+            r.status_code == 200
+            and {shift["name"] for shift in shifts} == {"MORNING", "EVENING", "NIGHT"},
+            "default shifts seeded on startup",
+            r.text,
+        )
+        morning_id = next(
+            shift["id"] for shift in shifts if shift["name"] == "MORNING"
+        )
+        night_id = next(shift["id"] for shift in shifts if shift["name"] == "NIGHT")
+
+        r = client.post(
+            "/shifts/", headers=emp_headers,
+            json={"name": "MORNING", "start_time": "09:00:00", "end_time": "17:00:00"},
+        )
+        s.check(r.status_code == 403, "employee cannot create shifts (403)", r.text)
+
+        r = client.post(
+            "/shifts/", headers=hr_headers,
+            json={"name": "MORNING", "start_time": "08:00:00", "end_time": "16:00:00"},
+        )
+        s.check(r.status_code == 400, "duplicate shift name rejected", r.text)
+
+        r = client.post(
+            "/shifts/assign", headers=hr_headers,
+            json={"employee_id": alice_id, "shift_id": morning_id},
+        )
+        s.check(
+            r.status_code == 200
+            and r.json()["shift"]["name"] == "MORNING"
+            and r.json()["employee_name"] == "Alice Sharma",
+            "HR assigns a shift",
+            r.text,
+        )
+        r = client.post(
+            "/shifts/assign", headers=hr_headers,
+            json={"employee_id": bob_id, "shift_id": night_id},
+        )
+        s.check(r.status_code == 200 and r.json()["shift"]["name"] == "NIGHT",
+                "cross-midnight night shift assigned", r.text)
+
+        r = client.post(
+            "/shifts/assign", headers=emp_headers,
+            json={"employee_id": bob_id, "shift_id": morning_id},
+        )
+        s.check(r.status_code == 403, "employee cannot assign shifts (403)", r.text)
+
+        r = client.get("/shifts/me", headers=alice_headers)
+        s.check(r.status_code == 200 and r.json()["shift"]["name"] == "MORNING",
+                "employee sees own shift", r.text)
+
+        r = client.get("/shifts/assignments", headers=alice_headers)
+        s.check(r.status_code == 200 and len(r.json()) == 1
+                and r.json()[0]["employee_id"] == alice_id,
+                "employee assignment list is scoped to self", r.text)
+
+        r = client.get("/shifts/assignments", headers=hr_headers)
+        s.check(r.status_code == 200 and len(r.json()) == 2,
+                "HR sees all shift assignments", r.text)
+
+        r = client.get(
+            "/shifts/schedule", headers=hr_headers, params={"date": today_str}
+        )
+        schedule = r.json()
+        alice_entry = next(
+            entry for entry in schedule if entry["employee_id"] == alice_id
+        )
+        s.check(
+            r.status_code == 200
+            and alice_entry["shift"]["name"] == "MORNING"
+            and alice_entry["check_in"] is not None,
+            "daily shift schedule includes attendance",
+            r.text,
+        )
+
+        r = client.get(
+            "/shifts/schedule", headers=bob_headers, params={"date": today_str}
+        )
+        s.check(r.status_code == 200 and len(r.json()) == 1
+                and r.json()[0]["employee_id"] == bob_id,
+                "employee schedule shows only self", r.text)
+
+        r = client.post(
+            "/shifts/auto-process", headers=emp_headers,
+            params={"date": "2020-01-02"},
+        )
+        s.check(r.status_code == 403, "employee cannot run shift automation", r.text)
+
+        r = client.post(
+            "/shifts/auto-process", headers=hr_headers,
+            params={"date": "2020-01-02"},
+        )
+        s.check(r.status_code == 200 and r.json()["marked_absent"] == 2,
+                "shift automation marks missing employees absent", r.text)
+
+        # ------------------------------------------------------------------
+        # Module 15 — Leave calendar & team availability
+        # ------------------------------------------------------------------
+        print("\n[Module 15] Leave Calendar & Team Availability")
+        r = client.get(
+            "/leave-calendar/?month=2026-11", headers=alice_headers
+        )
+        s.check(
+            r.status_code == 200
+            and any(entry["id"] == leave_id and entry["is_own"] for entry in r.json()),
+            "employee calendar shows approved own leave",
+            r.text,
+        )
+
+        r = client.get("/leave-calendar/?month=2026-11", headers=bob_headers)
+        s.check(r.status_code == 200 and r.json() == [],
+                "calendar is scoped to the employee's department", r.text)
+
+        r = client.get("/leave-calendar/?month=2026-11", headers=hr_headers)
+        s.check(r.status_code == 200 and len(r.json()) >= 1,
+                "HR sees leave across departments", r.text)
+
+        r = client.get(
+            "/leave-calendar/team", headers=hr_headers,
+            params={"date": "2026-11-03"},
+        )
+        team = r.json()
+        s.check(
+            r.status_code == 200
+            and any(entry["employee_id"] == alice_id for entry in team["on_leave"])
+            and all(member["employee_id"] != alice_id for member in team["available"]),
+            "team availability separates on-leave employees",
+            r.text,
+        )
+
+        r = client.get(
+            "/leave-calendar/conflicts", headers=hr_headers,
+            params={"start_date": "2026-11-03", "end_date": "2026-11-04"},
+        )
+        s.check(
+            r.status_code == 200
+            and r.json()["conflict_count"] == 1
+            and r.json()["allowed"] is True
+            and r.json()["max_concurrent"] == 0,
+            "leave conflict check respects configurable cap",
+            r.text,
+        )
+
+        r = client.get(
+            "/leave-calendar/conflicts", headers=alice_headers,
+            params={"start_date": "2026-11-03", "end_date": "2026-11-04"},
+        )
+        s.check(r.status_code == 200 and r.json()["conflict_count"] == 1
+                and r.json()["department"] == "Engineering",
+                "employee conflict check scoped to own department", r.text)
+
+        r = client.get(
+            "/leave-calendar/conflicts", headers=hr_headers,
+            params={"start_date": "2026-11-05", "end_date": "2026-11-01"},
+        )
+        s.check(r.status_code == 400, "invalid conflict range rejected", r.text)
+
+        r = client.get("/leave-calendar/?month=2026-13", headers=hr_headers)
+        s.check(r.status_code == 400, "invalid calendar month rejected", r.text)
+
+        # ------------------------------------------------------------------
+        # Module 16 — Secure documents
+        # ------------------------------------------------------------------
+        print("\n[Module 16] Documents")
+        r = client.post(
+            "/documents/upload",
+            headers=alice_headers,
+            files={"file": ("id-card.pdf", b"%PDF-1.4 fake test document", "application/pdf")},
+            data={"document_type": "ID_PROOF", "expiry_date": expiry_str},
+        )
+        s.check(
+            r.status_code == 201
+            and r.json()["file_name"] == "id-card.pdf"
+            and r.json()["document_type"] == "ID_PROOF"
+            and r.json()["employee_id"] == alice_id,
+            "employee uploads a PDF document",
+            r.text,
+        )
+        document_id = r.json()["id"]
+
+        r = client.post(
+            "/documents/upload",
+            headers=alice_headers,
+            files={"file": ("malware.exe", b"MZ executable", "application/octet-stream")},
+        )
+        s.check(r.status_code == 400, "disallowed extension rejected", r.text)
+
+        r = client.post(
+            "/documents/upload",
+            headers=alice_headers,
+            files={"file": ("fake.pdf", b"not actually a pdf", "application/pdf")},
+        )
+        s.check(r.status_code == 400, "magic-byte mismatch rejected", r.text)
+
+        r = client.post(
+            "/documents/upload",
+            headers=bob_headers,
+            files={"file": ("bob.pdf", b"%PDF-1.4 bob file", "application/pdf")},
+            data={"employee_id": str(alice_id)},
+        )
+        s.check(r.status_code == 403,
+                "employee cannot upload to another employee", r.text)
+
+        r = client.post(
+            "/documents/upload",
+            headers=hr_headers,
+            files={"file": ("hr.pdf", b"%PDF-1.4 hr file", "application/pdf")},
+        )
+        s.check(r.status_code == 400, "HR upload requires employee_id", r.text)
+
+        r = client.get("/documents/", headers=alice_headers)
+        s.check(r.status_code == 200 and len(r.json()) == 1
+                and r.json()[0]["id"] == document_id,
+                "employee lists only own documents", r.text)
+
+        r = client.get("/documents/", headers=bob_headers)
+        s.check(r.status_code == 200 and r.json() == [],
+                "another employee cannot see the document", r.text)
+
+        r = client.get(f"/documents/{document_id}", headers=bob_headers)
+        s.check(r.status_code == 404, "foreign document metadata hidden (404)", r.text)
+
+        r = client.get(f"/documents/{document_id}/download", headers=alice_headers)
+        s.check(
+            r.status_code == 200
+            and r.content.startswith(b"%PDF-")
+            and r.headers.get("x-content-type-options") == "nosniff",
+            "authenticated owner downloads the file",
+            r.text,
+        )
+
+        r = client.get(f"/documents/{document_id}/download")
+        s.check(r.status_code == 401, "download requires authentication", r.text)
+
+        r = client.get(
+            "/documents/", headers=hr_headers,
+            params={"employee_id": alice_id},
+        )
+        s.check(r.status_code == 200 and len(r.json()) == 1,
+                "HR filters documents by employee", r.text)
+
+        r = client.delete(f"/documents/{document_id}", headers=alice_headers)
+        s.check(r.status_code == 403, "employee cannot delete documents", r.text)
+
+        # ------------------------------------------------------------------
+        # Module 17 — Performance reviews
+        # ------------------------------------------------------------------
+        print("\n[Module 17] Performance Reviews")
+        r = client.post(
+            "/performance/", headers=hr_headers,
+            json={
+                "employee_id": alice_id,
+                "review_period": "2026-Q3",
+                "rating": 4,
+                "feedback": "Consistently strong delivery and mentoring.",
+            },
+        )
+        s.check(r.status_code == 201 and r.json()["rating"] == 4
+                and r.json()["employee_name"] == "Alice Sharma",
+                "HR creates a performance review", r.text)
+        review_id = r.json()["id"]
+
+        r = client.post(
+            "/performance/", headers=hr_headers,
+            json={
+                "employee_id": alice_id,
+                "review_period": "2026-Q3",
+                "rating": 5,
+                "feedback": "Duplicate period should be rejected.",
+            },
+        )
+        s.check(r.status_code == 400, "duplicate review period rejected", r.text)
+
+        r = client.post(
+            "/performance/", headers=emp_headers,
+            json={
+                "employee_id": bob_id,
+                "review_period": "2026-Q3",
+                "rating": 5,
+                "feedback": "Self review attempt.",
+            },
+        )
+        s.check(r.status_code == 403, "employee cannot create reviews", r.text)
+
+        r = client.get("/performance/", headers=alice_headers)
+        s.check(r.status_code == 200 and len(r.json()) == 1,
+                "employee sees own reviews only", r.text)
+
+        r = client.get("/performance/", headers=bob_headers)
+        s.check(r.status_code == 200 and r.json() == [],
+                "other employees see no reviews", r.text)
+
+        r = client.get(f"/performance/{review_id}", headers=bob_headers)
+        s.check(r.status_code == 404, "foreign review hidden (404)", r.text)
+
+        r = client.patch(
+            f"/performance/{review_id}", headers=hr_headers,
+            json={"rating": 5, "feedback": "Outstanding quarter."},
+        )
+        s.check(r.status_code == 200 and r.json()["rating"] == 5,
+                "HR edits a review", r.text)
+
+        r = client.get(f"/performance/summary/{alice_id}", headers=alice_headers)
+        s.check(
+            r.status_code == 200
+            and r.json()["average_rating"] == 5.0
+            and r.json()["reviews"] == 1
+            and r.json()["latest_rating"] == 5,
+            "employee performance summary",
+            r.text,
+        )
+
+        r = client.get(f"/performance/summary/{bob_id}", headers=alice_headers)
+        s.check(r.status_code == 403, "employee cannot view another summary", r.text)
+
+        r = client.get("/performance/summary/team", headers=hr_headers)
+        s.check(r.status_code == 200 and r.json()["total_reviews"] >= 1,
+                "team performance insights", r.text)
+
+        r = client.post(
+            "/performance/", headers=hr_headers,
+            json={
+                "employee_id": bob_id,
+                "review_period": "2026-Q3",
+                "rating": 3,
+                "feedback": "Meets expectations; growing into the role.",
+            },
+        )
+        bob_review_id = r.json()["id"]
+        r = client.delete(f"/performance/{bob_review_id}", headers=emp_headers)
+        s.check(r.status_code == 403, "employee cannot delete reviews", r.text)
+        r = client.delete(f"/performance/{bob_review_id}", headers=hr_headers)
+        s.check(r.status_code == 204, "HR deletes a review", r.text)
+
+        # ------------------------------------------------------------------
+        # Module 18 — Advanced analytics
+        # ------------------------------------------------------------------
+        print("\n[Module 18] Advanced Analytics")
+        r = client.get("/analytics/report", headers=hr_headers)
+        report = r.json()
+        s.check(
+            r.status_code == 200
+            and report["overview"]["total_employees"] == 2
+            and "filters" in report
+            and len(report["attendance_trends"]) > 0,
+            "combined analytics report",
+            r.text,
+        )
+
+        r = client.get(
+            "/analytics/report", headers=hr_headers,
+            params={"department": "Engineering"},
+        )
+        s.check(
+            r.status_code == 200
+            and r.json()["overview"]["total_employees"] == 1
+            and r.json()["filters"]["department"] == "Engineering",
+            "analytics department filter",
+            r.text,
+        )
+
+        r = client.get("/analytics/report", headers=emp_headers)
+        s.check(r.status_code == 403, "employee blocked from analytics", r.text)
+
+        r = client.get(
+            "/analytics/attendance-trends", headers=hr_headers,
+            params={"granularity": "month"},
+        )
+        s.check(r.status_code == 200 and len(r.json()) >= 1,
+                "attendance trend series", r.text)
+
+        r = client.get("/analytics/leave-trends", headers=hr_headers)
+        s.check(r.status_code == 200 and len(r.json()) >= 1,
+                "leave trend series", r.text)
+
+        r = client.get(
+            "/analytics/departments", headers=hr_headers,
+            params={"department": "Engineering"},
+        )
+        s.check(
+            r.status_code == 200
+            and any(row["department"] == "Engineering" and row["headcount"] == 1
+                    for row in r.json()),
+            "department analytics rows",
+            r.text,
+        )
+
+        r = client.get("/analytics/performance-insights", headers=hr_headers)
+        s.check(r.status_code == 200 and r.json()["total_reviews"] >= 1
+                and r.json()["average_rating"] > 0,
+                "analytics performance insights", r.text)
+
+        r = client.get(
+            "/analytics/overview", headers=hr_headers,
+            params={"start_date": "2026-10-10", "end_date": "2026-10-01"},
+        )
+        s.check(r.status_code == 400, "analytics rejects inverted date range", r.text)
+
+        r = client.get(
+            "/analytics/overview", headers=hr_headers,
+            params={"start_date": "2024-01-01", "end_date": "2026-10-01"},
+        )
+        s.check(r.status_code == 400, "analytics rejects ranges over 366 days", r.text)
+
+        # ------------------------------------------------------------------
+        # Module 19 — Smart alerts
+        # ------------------------------------------------------------------
+        print("\n[Module 19] Smart Alerts")
+        r = client.get("/notifications/alerts/summary", headers=hr_headers)
+        summary = r.json()
+        s.check(
+            r.status_code == 200
+            and summary["documents_expiring"] == 1
+            and len(summary["upcoming_document_expiries"]) == 1
+            and summary["late_today"] >= 0,
+            "smart alert summary counters",
+            r.text,
+        )
+
+        r = client.get("/notifications/alerts/summary", headers=alice_headers)
+        s.check(r.status_code == 403, "employee blocked from alert summary", r.text)
+
+        r = client.post(
+            "/notifications/alerts/document-expiry", headers=hr_headers
+        )
+        s.check(r.status_code == 200 and r.json()["created"] == 1,
+                "document expiry alert sent", r.text)
+        r = client.post(
+            "/notifications/alerts/document-expiry", headers=hr_headers
+        )
+        s.check(r.status_code == 200 and r.json()["skipped"] == 1
+                and r.json()["created"] == 0,
+                "document expiry alert deduplicated", r.text)
+
+        r = client.get("/notifications/", headers=alice_headers)
+        s.check(
+            any(item["category"] == "DOCUMENT" for item in r.json()["items"]),
+            "categorised document notification delivered",
+            r.text,
+        )
+
+        r = client.post(
+            "/notifications/alerts/late-attendance", headers=hr_headers,
+            params={"date": today_str},
+        )
+        s.check(r.status_code == 200 and "created" in r.json(),
+                "late attendance alert scan", r.text)
+
+        r = client.post("/notifications/alerts/run-all", headers=hr_headers)
+        s.check(r.status_code == 200 and "created" in r.json()
+                and "skipped" in r.json(),
+                "run-all alert scan", r.text)
+
+        r = client.post("/notifications/alerts/run-all", headers=emp_headers)
+        s.check(r.status_code == 403, "employee cannot trigger alert scans", r.text)
+
+        # ------------------------------------------------------------------
+        # Module 20 — Advanced employee search
+        # ------------------------------------------------------------------
+        print("\n[Module 20] Advanced Employee Search")
+        r = client.get(
+            "/employees/search", headers=hr_headers, params={"q": "alice"}
+        )
+        found = r.json()
+        s.check(
+            r.status_code == 200
+            and found["total"] == 1
+            and found["items"][0]["id"] == alice_id
+            and found["items"][0]["role"] == "EMPLOYEE"
+            and found["items"][0]["shift_name"] == "MORNING"
+            and found["items"][0]["average_rating"] == 5.0
+            and found["items"][0]["review_count"] == 1,
+            "search by name returns enriched metrics",
+            r.text,
+        )
+        s.check(
+            found["items"][0]["attendance_rate"] > 0
+            and found["items"][0]["late_count"] >= 0,
+            "search includes attendance metrics",
+            str(found["items"][0]),
+        )
+
+        r = client.get(
+            "/employees/search", headers=hr_headers, params={"shift_name": "NIGHT"}
+        )
+        s.check(
+            r.status_code == 200 and r.json()["total"] == 1
+            and r.json()["items"][0]["id"] == bob_id,
+            "filter employees by shift",
+            r.text,
+        )
+
+        r = client.get(
+            "/employees/search", headers=hr_headers, params={"min_rating": 4}
+        )
+        s.check(
+            r.status_code == 200 and r.json()["total"] == 1
+            and r.json()["items"][0]["id"] == alice_id,
+            "filter employees by minimum rating",
+            r.text,
+        )
+
+        r = client.get(
+            "/employees/search", headers=hr_headers,
+            params={"min_attendance_rate": 100},
+        )
+        s.check(r.status_code == 200 and r.json()["total"] == 0,
+                "filter employees by attendance rate", r.text)
+
+        r = client.get(
+            "/employees/search", headers=hr_headers,
+            params={"on_leave_today": "true"},
+        )
+        s.check(r.status_code == 200 and r.json()["total"] == 0,
+                "filter employees on leave today", r.text)
+
+        r = client.get(
+            "/employees/search", headers=hr_headers,
+            params={"sort_by": "rating", "sort_order": "desc"},
+        )
+        s.check(
+            r.status_code == 200
+            and r.json()["items"][0]["id"] == alice_id
+            and r.json()["total"] == 2,
+            "sort search results by rating",
+            r.text,
+        )
+
+        r = client.get("/employees/search", headers=emp_headers)
+        s.check(r.status_code == 403, "employee blocked from advanced search", r.text)
+
+        r = client.get("/employees/facets", headers=hr_headers)
+        facets = r.json()
+        s.check(
+            r.status_code == 200
+            and "Engineering" in facets["departments"]
+            and "Senior Engineer" in facets["designations"]
+            and {"ADMIN", "HR", "EMPLOYEE"} <= set(facets["roles"])
+            and len(facets["shifts"]) == 3,
+            "employee search facets",
+            r.text,
+        )
+
+        r = client.get("/employees/facets", headers=emp_headers)
+        s.check(r.status_code == 403, "employee blocked from facets", r.text)
+
+        # Document cleanup exercises the storage delete path.
+        r = client.delete(f"/documents/{document_id}", headers=hr_headers)
+        s.check(r.status_code == 204, "HR deletes a document", r.text)
+        r = client.get(f"/documents/{document_id}/download", headers=alice_headers)
+        s.check(r.status_code == 404, "deleted document is gone", r.text)
 
     return s.summary()
 

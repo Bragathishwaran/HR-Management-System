@@ -9,6 +9,7 @@ from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.database import get_db
 from app.dependencies import get_current_user, get_employee_profile, require_staff
 from app.models import Employee, Leave, LeaveBalance, LeaveStatus, User, UserRole
@@ -19,6 +20,7 @@ from app.services.leave_balances import (
     get_policy_map,
     leave_days,
 )
+from app.services.leave_calendar import overlapping_approved_leaves
 from app.services.notifications import notify_leave_status, notify_staff
 
 router = APIRouter(
@@ -53,6 +55,27 @@ async def apply_leave(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="You already have a pending or approved leave overlapping these dates.",
         )
+
+    if settings.max_concurrent_department_leave > 0:
+        conflicts = await overlapping_approved_leaves(
+            db,
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+            department=employee.department,
+            exclude_employee_id=employee.id,
+        )
+        if len(conflicts) >= settings.max_concurrent_department_leave:
+            names = ", ".join(
+                leave.employee.full_name for leave in conflicts[:5] if leave.employee
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Team leave conflict: {len(conflicts)} colleague(s) from "
+                    f"{employee.department} are already approved for these dates"
+                    + (f" ({names})." if names else ".")
+                ),
+            )
 
     requested_days = leave_days(payload.start_date, payload.end_date)
     balance = await get_employee_balance(db, employee.id, payload.leave_type)

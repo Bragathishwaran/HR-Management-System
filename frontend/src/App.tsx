@@ -4,16 +4,20 @@ import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { AttendancePage } from "./pages/AttendancePage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { DocumentsPage } from "./pages/DocumentsPage";
 import { EmployeeDetailPage } from "./pages/EmployeeDetailPage";
 import { EmployeesPage } from "./pages/EmployeesPage";
+import { LeaveCalendarPage } from "./pages/LeaveCalendarPage";
 import { LeavePoliciesPage } from "./pages/LeavePoliciesPage";
 import { LeavesPage } from "./pages/LeavesPage";
 import { LoginPage } from "./pages/LoginPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { NotificationsPage } from "./pages/NotificationsPage";
 import { PayrollPage } from "./pages/PayrollPage";
+import { PerformancePage } from "./pages/PerformancePage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { RegisterPage } from "./pages/RegisterPage";
+import { ShiftsPage } from "./pages/ShiftsPage";
 import { UsersPage } from "./pages/UsersPage";
 
 export function App() {
@@ -33,8 +37,12 @@ export function App() {
         <Route path="/employees" element={<EmployeesPage />} />
         <Route path="/employees/:id" element={<EmployeeDetailPage />} />
         <Route path="/attendance" element={<AttendancePage />} />
+        <Route path="/shifts" element={<ShiftsPage />} />
         <Route path="/leaves" element={<LeavesPage />} />
+        <Route path="/leave-calendar" element={<LeaveCalendarPage />} />
         <Route path="/payroll" element={<PayrollPage />} />
+        <Route path="/documents" element={<DocumentsPage />} />
+        <Route path="/performance" element={<PerformancePage />} />
         <Route
           path="/leave-policies"
           element={
@@ -54,7 +62,7 @@ export function App() {
         <Route
           path="/analytics"
           element={
-            <ProtectedRoute roles={["ADMIN"]}>
+            <ProtectedRoute roles={["HR", "ADMIN"]}>
               <AnalyticsPage />
             </ProtectedRoute>
           }

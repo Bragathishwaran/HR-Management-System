@@ -6,7 +6,9 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  ComposedChart,
   Legend,
+  Line,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -242,3 +244,110 @@ export function UserRoleChart({
     </ResponsiveContainer>
   );
 }
+
+export function AttendanceTrendChart({
+  data,
+  height = 260,
+}: {
+  data: Array<{
+    label: string;
+    present: number;
+    absent: number;
+    half_day: number;
+    late: number;
+  }>;
+  height?: number;
+}) {
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <ComposedChart data={data} margin={{ top: 12, right: 8, left: -14, bottom: 0 }}>
+        <defs>
+          <linearGradient id="attendanceFill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={chartColors.green} stopOpacity={0.3} />
+            <stop offset="100%" stopColor={chartColors.green} stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid strokeDasharray="3 5" vertical={false} stroke="#e8eeeb" />
+        <XAxis
+          dataKey="label"
+          tickLine={false}
+          axisLine={false}
+          tick={{ fontSize: 11, fill: "#82928c" }}
+          minTickGap={18}
+        />
+        <YAxis
+          allowDecimals={false}
+          tickLine={false}
+          axisLine={false}
+          tick={{ fontSize: 11, fill: "#82928c" }}
+          width={38}
+        />
+        <Tooltip contentStyle={tooltipStyle} />
+        <Area
+          type="monotone"
+          dataKey="present"
+          name="Present"
+          stroke={chartColors.green}
+          strokeWidth={2.5}
+          fill="url(#attendanceFill)"
+        />
+        <Line
+          type="monotone"
+          dataKey="absent"
+          name="Absent"
+          stroke={chartColors.rose}
+          strokeWidth={2}
+          dot={false}
+        />
+        <Line
+          type="monotone"
+          dataKey="late"
+          name="Late"
+          stroke={chartColors.amber}
+          strokeWidth={2}
+          dot={false}
+        />
+      </ComposedChart>
+    </ResponsiveContainer>
+  );
+}
+
+export function LeaveTrendChart({
+  data,
+  height = 260,
+}: {
+  data: Array<{
+    label: string;
+    approved: number;
+    pending: number;
+    rejected: number;
+  }>;
+  height?: number;
+}) {
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <BarChart data={data} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 5" vertical={false} stroke="#e8eeeb" />
+        <XAxis
+          dataKey="label"
+          tickLine={false}
+          axisLine={false}
+          tick={{ fontSize: 11, fill: "#82928c" }}
+          minTickGap={14}
+        />
+        <YAxis
+          allowDecimals={false}
+          tickLine={false}
+          axisLine={false}
+          tick={{ fontSize: 11, fill: "#82928c" }}
+          width={34}
+        />
+        <Tooltip contentStyle={tooltipStyle} cursor={{ fill: "#f4f8f5" }} />
+        <Bar dataKey="approved" name="Approved" stackId="leave" fill={chartColors.green} radius={[0, 0, 0, 0]} />
+        <Bar dataKey="pending" name="Pending" stackId="leave" fill={chartColors.amber} />
+        <Bar dataKey="rejected" name="Rejected" stackId="leave" fill={chartColors.rose} radius={[6, 6, 0, 0]} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+

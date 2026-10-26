@@ -1,20 +1,39 @@
 import type {
   AdminAnalytics,
+  AlertRunResponse,
+  AnalyticsOverview,
+  AnalyticsReport,
+  AttendanceAnalyticsPoint,
   AttendanceRecord,
+  AutoAttendanceResponse,
   AutoMarkAbsentResponse,
   CheckInOutResponse,
   DashboardStats,
   DashboardTrends,
+  DepartmentAnalyticsRow,
+  DocumentRecord,
   Employee,
+  EmployeeFacets,
+  EmployeePerformanceSummary,
+  EmployeeSearchResponse,
+  EmployeeShift,
   Leave,
   LeaveBalance,
+  LeaveCalendarEntry,
+  LeaveConflictResponse,
   LeavePolicy,
   LeaveStatus,
+  NotificationAlertSummary,
   NotificationList,
   Payroll,
   PayrollDetail,
   PayrollSummary,
+  PerformanceReview,
   SelfServiceDashboard,
+  Shift,
+  ShiftScheduleEntry,
+  TeamAvailability,
+  TeamPerformanceInsights,
   TokenResponse,
   User,
   User as UserType,
@@ -117,6 +136,7 @@ interface RequestOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
   form?: Record<string, string>;
+  formData?: FormData;
   params?: Record<string, string | number | boolean | null | undefined>;
   auth?: boolean;
   signal?: AbortSignal;
@@ -127,6 +147,7 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
     method = "GET",
     body,
     form,
+    formData,
     params,
     auth = true,
     signal,
@@ -145,7 +166,10 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   const headers: Record<string, string> = { Accept: "application/json" };
   let payload: BodyInit | undefined;
 
-  if (form) {
+  if (formData) {
+    // Let the browser set the multipart boundary.
+    payload = formData;
+  } else if (form) {
     headers["Content-Type"] = "application/x-www-form-urlencoded";
     payload = new URLSearchParams(form).toString();
   } else if (body !== undefined) {
@@ -197,6 +221,70 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   return data as T;
 }
 
+/**
+ * Download an authenticated file (document attachments are never exposed as
+ * public URLs). Uses the same bearer token as normal API calls.
+ */
+export async function downloadFile(path: string, fallbackName: string): Promise<void> {
+  const token = getStoredToken();
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, { headers });
+  } catch {
+    throw new ApiError(
+      "Cannot reach the WorkSphere API. Make sure the backend is running.",
+      0,
+    );
+  }
+
+  if (response.status === 401 && token) {
+    window.dispatchEvent(new Event("worksphere:unauthorized"));
+  }
+
+  if (!response.ok) {
+    const contentType = response.headers.get("content-type") || "";
+    const data = contentType.includes("application/json")
+      ? await response.json().catch(() => null)
+      : null;
+    throw new ApiError(
+      formatErrorDetail(
+        data && typeof data === "object" && "detail" in data
+          ? (data as { detail: unknown }).detail
+          : "Download failed",
+      ),
+      response.status,
+      data,
+    );
+  }
+
+  const disposition = response.headers.get("content-disposition") || "";
+  const utfMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  const plainMatch = disposition.match(/filename="?([^";]+)"?/i);
+  let filename = fallbackName;
+  if (utfMatch?.[1]) {
+    try {
+      filename = decodeURIComponent(utfMatch[1]);
+    } catch {
+      filename = fallbackName;
+    }
+  } else if (plainMatch?.[1]) {
+    filename = plainMatch[1];
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 export function loginRequest(username: string, password: string): Promise<TokenResponse> {
   return api<TokenResponse>("/auth/token", {
     method: "POST",
@@ -233,6 +321,31 @@ export const endpoints = {
     api<Employee>(`/employees/${id}`, { method: "PUT", body: payload }),
   deleteEmployee: (id: number) =>
     api<void>(`/employees/${id}`, { method: "DELETE" }),
+  searchEmployees: (params?: RequestOptions["params"]) =>
+    api<EmployeeSearchResponse>("/employees/search", { params }),
+  employeeFacets: () => api<EmployeeFacets>("/employees/facets"),
+
+  // Shifts
+  shifts: () => api<Shift[]>("/shifts/"),
+  createShift: (payload: Record<string, unknown>) =>
+    api<Shift>("/shifts/", { method: "POST", body: payload }),
+  assignShift: (employeeId: number, shiftId: number) =>
+    api<EmployeeShift>("/shifts/assign", {
+      method: "POST",
+      body: { employee_id: employeeId, shift_id: shiftId },
+    }),
+  removeShiftAssignment: (employeeId: number) =>
+    api<void>(`/shifts/assignments/${employeeId}`, { method: "DELETE" }),
+  shiftAssignments: (params?: RequestOptions["params"]) =>
+    api<EmployeeShift[]>("/shifts/assignments", { params }),
+  myShift: () => api<EmployeeShift | null>("/shifts/me"),
+  shiftSchedule: (params?: RequestOptions["params"]) =>
+    api<ShiftScheduleEntry[]>("/shifts/schedule", { params }),
+  autoProcessAttendance: (date: string) =>
+    api<AutoAttendanceResponse>("/shifts/auto-process", {
+      method: "POST",
+      params: { date },
+    }),
 
   // Attendance
   checkIn: () =>
@@ -265,6 +378,42 @@ export const endpoints = {
       body: { status },
     }),
 
+  // Leave calendar
+  leaveCalendar: (params?: RequestOptions["params"]) =>
+    api<LeaveCalendarEntry[]>("/leave-calendar/", { params }),
+  teamAvailability: (params?: RequestOptions["params"]) =>
+    api<TeamAvailability>("/leave-calendar/team", { params }),
+  leaveConflicts: (params?: RequestOptions["params"]) =>
+    api<LeaveConflictResponse>("/leave-calendar/conflicts", { params }),
+
+  // Documents
+  documents: (params?: RequestOptions["params"]) =>
+    api<DocumentRecord[]>("/documents/", { params }),
+  uploadDocument: (formData: FormData) =>
+    api<DocumentRecord>("/documents/upload", {
+      method: "POST",
+      formData,
+    }),
+  deleteDocument: (id: number) =>
+    api<void>(`/documents/${id}`, { method: "DELETE" }),
+
+  // Performance
+  performanceReviews: (params?: RequestOptions["params"]) =>
+    api<PerformanceReview[]>("/performance/", { params }),
+  createPerformanceReview: (payload: Record<string, unknown>) =>
+    api<PerformanceReview>("/performance/", { method: "POST", body: payload }),
+  updatePerformanceReview: (id: number, payload: Record<string, unknown>) =>
+    api<PerformanceReview>(`/performance/${id}`, {
+      method: "PATCH",
+      body: payload,
+    }),
+  deletePerformanceReview: (id: number) =>
+    api<void>(`/performance/${id}`, { method: "DELETE" }),
+  performanceSummary: (employeeId: number) =>
+    api<EmployeePerformanceSummary>(`/performance/summary/${employeeId}`),
+  teamPerformance: (params?: RequestOptions["params"]) =>
+    api<TeamPerformanceInsights>("/performance/summary/team", { params }),
+
   // Policies
   leavePolicies: () => api<LeavePolicy[]>("/leave-policies/"),
   updateLeavePolicy: (type: string, totalDays: number) =>
@@ -287,6 +436,20 @@ export const endpoints = {
   dashboardTrends: () => api<DashboardTrends>("/dashboard/trends"),
   adminAnalytics: () => api<AdminAnalytics>("/dashboard/analytics"),
 
+  // Advanced analytics
+  analyticsReport: (params?: RequestOptions["params"]) =>
+    api<AnalyticsReport>("/analytics/report", { params }),
+  analyticsOverview: (params?: RequestOptions["params"]) =>
+    api<AnalyticsOverview>("/analytics/overview", { params }),
+  attendanceTrends: (params?: RequestOptions["params"]) =>
+    api<AttendanceAnalyticsPoint[]>("/analytics/attendance-trends", { params }),
+  analyticsLeaveTrends: (params?: RequestOptions["params"]) =>
+    api<AnalyticsReport["leave_trends"]>("/analytics/leave-trends", { params }),
+  analyticsPerformance: (params?: RequestOptions["params"]) =>
+    api<TeamPerformanceInsights>("/analytics/performance-insights", { params }),
+  departmentAnalytics: (params?: RequestOptions["params"]) =>
+    api<DepartmentAnalyticsRow[]>("/analytics/departments", { params }),
+
   // Self service
   myProfile: () => api<Employee>("/me/profile"),
   myDashboard: () => api<SelfServiceDashboard>("/me/dashboard"),
@@ -307,6 +470,19 @@ export const endpoints = {
     }),
   markAllNotificationsRead: () =>
     api<{ updated: number }>("/notifications/read-all", { method: "PATCH" }),
+  alertSummary: () => api<NotificationAlertSummary>("/notifications/alerts/summary"),
+  runLateAlerts: (date?: string) =>
+    api<AlertRunResponse>("/notifications/alerts/late-attendance", {
+      method: "POST",
+      params: { date },
+    }),
+  runDocumentExpiryAlerts: (days?: number) =>
+    api<AlertRunResponse>("/notifications/alerts/document-expiry", {
+      method: "POST",
+      params: { days },
+    }),
+  runAllAlerts: () =>
+    api<AlertRunResponse>("/notifications/alerts/run-all", { method: "POST" }),
 
   // Admin users
   users: (params?: RequestOptions["params"]) =>

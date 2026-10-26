@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Optional
 
 from pydantic import (
@@ -16,9 +16,11 @@ from pydantic import (
 
 from app.models import (
     AttendanceStatus,
+    DocumentType,
     EmployeeStatus,
     LeaveStatus,
     LeaveType,
+    ShiftName,
     UserRole,
 )
 
@@ -159,6 +161,9 @@ class AttendanceRead(BaseModel):
     is_late: bool = False
     late_minutes: Optional[int] = None
     overtime_hours: Optional[float] = None
+    shift_id: Optional[int] = None
+    is_early_exit: bool = False
+    early_exit_minutes: Optional[int] = None
 
 
 class CheckInOutResponse(BaseModel):
@@ -421,6 +426,7 @@ class NotificationRead(BaseModel):
     title: str
     message: str
     is_read: bool
+    category: str = "GENERAL"
     created_at: datetime
 
 
@@ -432,6 +438,325 @@ class NotificationListResponse(BaseModel):
 
 class NotificationReadAllResponse(BaseModel):
     updated: int
+
+
+# ---------------------------------------------------------------------------
+# Module 14 — Shifts & automated attendance
+# ---------------------------------------------------------------------------
+class ShiftBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: ShiftName
+    start_time: time
+    end_time: time
+
+    @model_validator(mode="after")
+    def distinct_times(self) -> "ShiftBase":
+        if self.start_time == self.end_time:
+            raise ValueError("start_time and end_time must differ")
+        return self
+
+
+class ShiftCreate(ShiftBase):
+    """POST /shifts payload (HR/Admin)."""
+
+
+class ShiftRead(ShiftBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+
+
+class ShiftAssign(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    employee_id: int = Field(gt=0)
+    shift_id: int = Field(gt=0)
+
+
+class EmployeeShiftRead(BaseModel):
+    id: int
+    employee_id: int
+    shift_id: int
+    assigned_at: datetime
+    employee_name: str
+    department: str
+    shift: ShiftRead
+
+
+class ShiftScheduleEntry(BaseModel):
+    employee_id: int
+    employee_name: str
+    department: str
+    designation: str
+    shift: Optional[ShiftRead] = None
+    attendance_status: Optional[AttendanceStatus] = None
+    check_in: Optional[datetime] = None
+    check_out: Optional[datetime] = None
+    is_late: bool = False
+    late_minutes: Optional[int] = None
+    is_early_exit: bool = False
+    early_exit_minutes: Optional[int] = None
+
+
+class AutoAttendanceResponse(BaseModel):
+    date: date
+    processed: int
+    marked_absent: int
+    marked_late: int
+    marked_early_exit: int
+    skipped_on_leave: int
+    employee_ids: list[int]
+
+
+# ---------------------------------------------------------------------------
+# Module 15 — Leave calendar & team availability
+# ---------------------------------------------------------------------------
+class LeaveCalendarEntry(BaseModel):
+    id: int
+    employee_id: int
+    employee_name: str
+    department: str
+    leave_type: LeaveType
+    start_date: date
+    end_date: date
+    status: LeaveStatus
+    is_own: bool = False
+
+    @computed_field
+    @property
+    def days(self) -> int:
+        return (self.end_date - self.start_date).days + 1
+
+
+class TeamMemberRead(BaseModel):
+    employee_id: int
+    full_name: str
+    designation: str
+    department: str
+    shift: Optional[ShiftRead] = None
+    today_attendance: Optional[AttendanceStatus] = None
+
+
+class TeamAvailability(BaseModel):
+    date: date
+    department: Optional[str] = None
+    total_employees: int
+    available: list[TeamMemberRead]
+    on_leave: list[LeaveCalendarEntry]
+
+
+class LeaveConflictEntry(BaseModel):
+    id: int
+    employee_id: int
+    employee_name: str
+    department: str
+    leave_type: LeaveType
+    start_date: date
+    end_date: date
+    status: LeaveStatus
+
+
+class LeaveConflictResponse(BaseModel):
+    start_date: date
+    end_date: date
+    department: Optional[str] = None
+    max_concurrent: int
+    allowed: bool
+    conflict_count: int
+    conflicts: list[LeaveConflictEntry]
+
+
+# ---------------------------------------------------------------------------
+# Module 16 — Documents
+# ---------------------------------------------------------------------------
+class DocumentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    employee_id: int
+    file_name: str
+    file_url: str
+    document_type: DocumentType
+    content_type: str
+    file_size: int
+    expiry_date: Optional[date] = None
+    uploaded_at: datetime
+    employee_name: Optional[str] = None
+    uploaded_by: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Module 17 — Performance
+# ---------------------------------------------------------------------------
+class PerformanceCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    employee_id: int = Field(gt=0)
+    review_period: str = Field(min_length=2, max_length=40)
+    rating: int = Field(ge=1, le=5)
+    feedback: str = Field(min_length=3, max_length=2000)
+
+
+class PerformanceUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    review_period: Optional[str] = Field(default=None, min_length=2, max_length=40)
+    rating: Optional[int] = Field(default=None, ge=1, le=5)
+    feedback: Optional[str] = Field(default=None, min_length=3, max_length=2000)
+
+
+class PerformanceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    employee_id: int
+    review_period: str
+    rating: int
+    feedback: str
+    created_at: datetime
+    employee_name: Optional[str] = None
+    department: Optional[str] = None
+    reviewed_by: Optional[str] = None
+
+
+class DepartmentRating(BaseModel):
+    department: str
+    average_rating: float
+    reviews: int
+
+
+class EmployeePerformanceSummary(BaseModel):
+    employee_id: int
+    employee_name: Optional[str] = None
+    average_rating: float
+    reviews: int
+    latest_rating: Optional[int] = None
+    rating_distribution: dict[str, int]
+
+
+class TeamPerformanceInsights(BaseModel):
+    average_rating: float
+    total_reviews: int
+    rating_distribution: dict[str, int]
+    departments: list[DepartmentRating]
+
+
+# ---------------------------------------------------------------------------
+# Module 18 — Advanced analytics
+# ---------------------------------------------------------------------------
+class AnalyticsOverview(BaseModel):
+    total_employees: int
+    active_employees: int
+    departments: int
+    attendance_records: int
+    present: int
+    absent: int
+    half_day: int
+    late: int
+    early_exits: int
+    attendance_rate: float
+    leave_requests: int
+    approved_leave_days: int
+    average_rating: float
+    reviews: int
+
+
+class AttendanceAnalyticsPoint(BaseModel):
+    period: str
+    present: int
+    absent: int
+    half_day: int
+    late: int
+    total: int
+    attendance_rate: float
+
+
+class LeaveAnalyticsPoint(BaseModel):
+    period: str
+    approved: int
+    pending: int
+    rejected: int
+    days: int
+
+
+class LeaveTypeMetric(BaseModel):
+    leave_type: LeaveType
+    requests: int
+    days: int
+
+
+class DepartmentAnalyticsRow(BaseModel):
+    department: str
+    headcount: int
+    present: int
+    absent: int
+    late: int
+    attendance_rate: float
+    leave_days: int
+    average_rating: float
+    reviews: int
+
+
+class AnalyticsFilters(BaseModel):
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    department: Optional[str] = None
+
+
+class AnalyticsReport(BaseModel):
+    filters: AnalyticsFilters
+    overview: AnalyticsOverview
+    attendance_trends: list[AttendanceAnalyticsPoint]
+    leave_trends: list[LeaveAnalyticsPoint]
+    leave_types: list[LeaveTypeMetric]
+    performance: TeamPerformanceInsights
+    departments: list[DepartmentAnalyticsRow]
+
+
+# ---------------------------------------------------------------------------
+# Module 19 — Smart alerts
+# ---------------------------------------------------------------------------
+class NotificationAlertSummary(BaseModel):
+    unread: int
+    late_today: int
+    pending_leave_requests: int
+    documents_expiring: int
+    upcoming_document_expiries: list[DocumentRead]
+
+
+class AlertRunResponse(BaseModel):
+    created: int
+    skipped: int
+    message: str
+
+
+# ---------------------------------------------------------------------------
+# Module 20 — Advanced employee search
+# ---------------------------------------------------------------------------
+class EmployeeSearchItem(EmployeeRead):
+    role: Optional[UserRole] = None
+    shift_name: Optional[ShiftName] = None
+    attendance_rate: float = 0.0
+    late_count: int = 0
+    average_rating: float = 0.0
+    review_count: int = 0
+    today_attendance: Optional[AttendanceStatus] = None
+    on_leave_today: bool = False
+
+
+class EmployeeSearchResponse(BaseModel):
+    total: int
+    skip: int
+    limit: int
+    items: list[EmployeeSearchItem]
+
+
+class EmployeeFacets(BaseModel):
+    departments: list[str]
+    designations: list[str]
+    roles: list[UserRole]
+    shifts: list[ShiftRead]
 
 
 # ---------------------------------------------------------------------------

@@ -3,6 +3,8 @@ export type EmployeeStatus = "ACTIVE" | "INACTIVE";
 export type AttendanceStatus = "PRESENT" | "ABSENT" | "HALF_DAY";
 export type LeaveType = "SICK" | "CASUAL" | "PAID";
 export type LeaveStatus = "PENDING" | "APPROVED" | "REJECTED";
+export type ShiftName = "MORNING" | "EVENING" | "NIGHT";
+export type DocumentType = "ID_PROOF" | "CERTIFICATE" | "CONTRACT" | "OTHER";
 
 export interface User {
   id: number;
@@ -44,6 +46,9 @@ export interface AttendanceRecord {
   is_late: boolean;
   late_minutes: number | null;
   overtime_hours: number | null;
+  shift_id: number | null;
+  is_early_exit: boolean;
+  early_exit_minutes: number | null;
 }
 
 export interface CheckInOutResponse {
@@ -200,6 +205,8 @@ export interface NotificationItem {
   title: string;
   message: string;
   is_read: boolean;
+  category: string;
+  dedupe_key: string | null;
   created_at: string;
 }
 
@@ -207,4 +214,256 @@ export interface NotificationList {
   total: number;
   unread: number;
   items: NotificationItem[];
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 — shifts, leave calendar, documents, performance, analytics, alerts
+// ---------------------------------------------------------------------------
+export interface Shift {
+  id: number;
+  name: ShiftName;
+  start_time: string;
+  end_time: string;
+}
+
+export interface EmployeeShift {
+  id: number;
+  employee_id: number;
+  shift_id: number;
+  assigned_at: string;
+  employee_name: string;
+  department: string;
+  shift: Shift;
+}
+
+export interface ShiftScheduleEntry {
+  employee_id: number;
+  employee_name: string;
+  department: string;
+  designation: string;
+  shift: Shift | null;
+  attendance_status: AttendanceStatus | null;
+  check_in: string | null;
+  check_out: string | null;
+  is_late: boolean;
+  late_minutes: number | null;
+  is_early_exit: boolean;
+  early_exit_minutes: number | null;
+}
+
+export interface AutoAttendanceResponse {
+  date: string;
+  processed: number;
+  marked_absent: number;
+  marked_late: number;
+  marked_early_exit: number;
+  skipped_on_leave: number;
+  employee_ids: number[];
+}
+
+export interface LeaveCalendarEntry {
+  id: number;
+  employee_id: number;
+  employee_name: string;
+  department: string;
+  leave_type: LeaveType;
+  start_date: string;
+  end_date: string;
+  status: LeaveStatus;
+  is_own: boolean;
+  days: number;
+}
+
+export interface TeamMember {
+  employee_id: number;
+  full_name: string;
+  designation: string;
+  department: string;
+  shift: Shift | null;
+  today_attendance: AttendanceStatus | null;
+}
+
+export interface TeamAvailability {
+  date: string;
+  department: string | null;
+  total_employees: number;
+  available: TeamMember[];
+  on_leave: LeaveCalendarEntry[];
+}
+
+export interface LeaveConflictEntry {
+  id: number;
+  employee_id: number;
+  employee_name: string;
+  department: string;
+  leave_type: LeaveType;
+  start_date: string;
+  end_date: string;
+  status: LeaveStatus;
+}
+
+export interface LeaveConflictResponse {
+  start_date: string;
+  end_date: string;
+  department: string | null;
+  max_concurrent: number;
+  allowed: boolean;
+  conflict_count: number;
+  conflicts: LeaveConflictEntry[];
+}
+
+export interface DocumentRecord {
+  id: number;
+  employee_id: number;
+  file_name: string;
+  file_url: string;
+  document_type: DocumentType;
+  content_type: string;
+  file_size: number;
+  expiry_date: string | null;
+  uploaded_at: string;
+  employee_name: string | null;
+  uploaded_by: string | null;
+}
+
+export interface PerformanceReview {
+  id: number;
+  employee_id: number;
+  review_period: string;
+  rating: number;
+  feedback: string;
+  created_at: string;
+  employee_name: string | null;
+  department: string | null;
+  reviewed_by: string | null;
+}
+
+export interface EmployeePerformanceSummary {
+  employee_id: number;
+  employee_name: string | null;
+  average_rating: number;
+  reviews: number;
+  latest_rating: number | null;
+  rating_distribution: Record<string, number>;
+}
+
+export interface DepartmentRating {
+  department: string;
+  average_rating: number;
+  reviews: number;
+}
+
+export interface TeamPerformanceInsights {
+  average_rating: number;
+  total_reviews: number;
+  rating_distribution: Record<string, number>;
+  departments: DepartmentRating[];
+}
+
+export interface AnalyticsFilters {
+  start_date: string | null;
+  end_date: string | null;
+  department: string | null;
+}
+
+export interface AnalyticsOverview {
+  total_employees: number;
+  active_employees: number;
+  departments: number;
+  attendance_records: number;
+  present: number;
+  absent: number;
+  half_day: number;
+  late: number;
+  early_exits: number;
+  attendance_rate: number;
+  leave_requests: number;
+  approved_leave_days: number;
+  average_rating: number;
+  reviews: number;
+}
+
+export interface AttendanceAnalyticsPoint {
+  period: string;
+  present: number;
+  absent: number;
+  half_day: number;
+  late: number;
+  total: number;
+  attendance_rate: number;
+}
+
+export interface LeaveAnalyticsPoint {
+  period: string;
+  approved: number;
+  pending: number;
+  rejected: number;
+  days: number;
+}
+
+export interface LeaveTypeMetric {
+  leave_type: LeaveType;
+  requests: number;
+  days: number;
+}
+
+export interface DepartmentAnalyticsRow {
+  department: string;
+  headcount: number;
+  present: number;
+  absent: number;
+  late: number;
+  attendance_rate: number;
+  leave_days: number;
+  average_rating: number;
+  reviews: number;
+}
+
+export interface AnalyticsReport {
+  filters: AnalyticsFilters;
+  overview: AnalyticsOverview;
+  attendance_trends: AttendanceAnalyticsPoint[];
+  leave_trends: LeaveAnalyticsPoint[];
+  leave_types: LeaveTypeMetric[];
+  performance: TeamPerformanceInsights;
+  departments: DepartmentAnalyticsRow[];
+}
+
+export interface NotificationAlertSummary {
+  unread: number;
+  late_today: number;
+  pending_leave_requests: number;
+  documents_expiring: number;
+  upcoming_document_expiries: DocumentRecord[];
+}
+
+export interface AlertRunResponse {
+  created: number;
+  skipped: number;
+  message: string;
+}
+
+export interface EmployeeSearchItem extends Employee {
+  role: Role | null;
+  shift_name: ShiftName | null;
+  attendance_rate: number;
+  late_count: number;
+  average_rating: number;
+  review_count: number;
+  today_attendance: AttendanceStatus | null;
+  on_leave_today: boolean;
+}
+
+export interface EmployeeSearchResponse {
+  total: number;
+  skip: number;
+  limit: number;
+  items: EmployeeSearchItem[];
+}
+
+export interface EmployeeFacets {
+  departments: string[];
+  designations: string[];
+  roles: Role[];
+  shifts: Shift[];
 }

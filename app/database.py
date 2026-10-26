@@ -49,9 +49,16 @@ _SQLITE_COLUMN_MIGRATIONS: dict[str, dict[str, str]] = {
         "is_late": "BOOLEAN NOT NULL DEFAULT 0",
         "late_minutes": "INTEGER",
         "overtime_hours": "FLOAT",
+        "shift_id": "INTEGER REFERENCES shifts(id) ON DELETE SET NULL",
+        "is_early_exit": "BOOLEAN NOT NULL DEFAULT 0",
+        "early_exit_minutes": "INTEGER",
     },
     "payroll": {
         "allowances": "FLOAT NOT NULL DEFAULT 0",
+    },
+    "notifications": {
+        "category": "VARCHAR(40) NOT NULL DEFAULT 'GENERAL'",
+        "dedupe_key": "VARCHAR(160)",
     },
 }
 

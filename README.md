@@ -4,7 +4,10 @@ A full-stack, role-driven HR platform: an async FastAPI backend plus a React +
 TypeScript single-page app. Phase 1 delivered the seven core modules (auth,
 employees, attendance, leaves, payroll, dashboard, notifications). Phase 2 adds
 RBAC hardening, an employee self-service portal, advanced attendance, leave
-policies/balances, detailed payroll breakdowns and admin user management.
+policies/balances, detailed payroll breakdowns and admin user management. Phase 3
+adds shift scheduling and automated attendance, a leave calendar, secure employee
+documents, performance reviews, advanced analytics, smart notifications and
+server-side employee search.
 
 ## Tech Stack
 
@@ -36,20 +39,27 @@ HRMS/
 │   ├── dependencies.py            # auth, role guards, profile resolution
 │   ├── services/
 │   │   ├── notifications.py       # event notifications
+│   │   ├── shifts.py              # shifts + attendance automation
+│   │   ├── documents.py           # secure file validation/storage
 │   │   └── leave_balances.py      # policy/balance bootstrap + helpers
 │   └── routers/
 │       ├── auth.py                # /auth              Module 1
-│       ├── employees.py           # /employees         Module 2
+│       ├── employees.py           # /employees         Module 2 + 20
 │       ├── users.py               # /users             Module 13 (Admin)
 │       ├── self_service.py        # /me                Module 9
 │       ├── attendance.py          # /attendance        Modules 3 + 10
+│       ├── shifts.py              # /shifts            Module 14
 │       ├── leave_policies.py      # /leave-policies    Module 11
 │       ├── leaves.py              # /leaves            Modules 4 + 11
+│       ├── leave_calendar.py      # /leave-calendar    Module 15
+│       ├── documents.py           # /documents         Module 16
+│       ├── performance.py         # /performance       Module 17
+│       ├── analytics.py           # /analytics         Module 18
 │       ├── payroll.py             # /payroll           Modules 5 + 12
 │       ├── dashboard.py           # /dashboard         Modules 6 + 13
-│       └── notifications.py       # /notifications     Module 7
+│       └── notifications.py       # /notifications     Modules 7 + 19
 ├── scripts/seed_demo.py           # demo data seeder
-├── tests/test_smoke.py            # end-to-end API suite (122 checks)
+├── tests/test_smoke.py            # end-to-end API suite (196 checks)
 ├── frontend/
 │   ├── src/
 │   │   ├── pages/                 # dashboards, employees, attendance, leaves…
@@ -108,9 +118,11 @@ Sign in with any seeded account, e.g. `admin1` / `Passw0rd!123` (Admin),
 `hr1` (HR) or `alice` (Employee). HR/Admin land on the operations dashboard;
 employees land on their self-service portal.
 
-On startup the app creates missing tables and adds Phase 2 columns to an
-existing SQLite database (idempotent), then ensures default leave policies and
-per-employee leave balances exist.
+On startup the app creates missing tables and adds Phase 2/3 columns to an
+existing SQLite database (idempotent), ensures default leave policies and
+per-employee leave balances exist, and seeds the morning, evening and night
+shifts. The optional attendance automation loop only starts when
+`AUTO_ATTENDANCE_ENABLED=true`.
 
 ## Role-Based Access Control
 
@@ -131,9 +143,16 @@ Every protected endpoint resolves the user from the database and re-validates:
 | View all attendance / leave balances | – | ✓ | ✓ |
 | Manage leave policies | – | ✓ | ✓ |
 | Generate payroll / view summaries | – | ✓ | ✓ |
+| Manage shifts / run attendance automation | – | ✓ | ✓ |
+| View team leave calendar (all departments) | – | ✓ | ✓ |
+| Manage any employee document | – | ✓ | ✓ |
+| View own document vault | ✓ | ✓ | ✓ |
+| Publish/delete performance reviews | – | ✓ | ✓ |
+| View own performance reviews | ✓ | ✓ | ✓ |
+| Advanced search + analytics | – | ✓ | ✓ |
+| Send smart alerts | – | ✓ | ✓ |
 | View operational dashboard | – | ✓ | ✓ |
 | Manage users, roles, activation | – | – | ✓ |
-| System-wide analytics | – | – | ✓ |
 | Full system access | – | – | ✓ |
 
 Ownership checks prevent employees from reading another employee's profile,
@@ -163,6 +182,8 @@ and at least one active ADMIN must always remain.
 | ------ | ---- | ------ | ----------- |
 | POST | `/employees/` | HR/Admin | Add employee (link user or create inline account; seeds leave balances) |
 | GET | `/employees/` | Any | Directory search/filter (salary masked for non-staff) |
+| GET | `/employees/search` | HR/Admin | Advanced search by role, shift, rating, attendance and availability with pagination |
+| GET | `/employees/facets` | HR/Admin | Distinct departments/designations/roles plus shift options |
 | GET | `/employees/{id}` | Own/HR/Admin | Employee profile (employees may only view themselves) |
 | PUT | `/employees/{id}` | HR/Admin | Update employee |
 | DELETE | `/employees/{id}` | HR/Admin | Delete employee + cascade records |
@@ -204,6 +225,76 @@ are seeded when an employee is created and backfilled on startup. Requests that
 exceed the remaining balance are rejected; approval re-checks and deducts
 atomically.
 
+### Shifts & attendance automation
+
+| Method | Path | Access | Description |
+| ------ | ---- | ------ | ----------- |
+| GET | `/shifts/` | Any | Morning, evening and night shift definitions |
+| POST | `/shifts/` | HR/Admin | Create a shift (UTC start/end, cross-midnight allowed) |
+| POST | `/shifts/assign` | HR/Admin | Assign or replace an employee’s single active shift |
+| GET | `/shifts/assignments` | Own/HR/Admin | Shift assignments (all for staff) |
+| GET | `/shifts/me` | Any | Current employee’s shift |
+| GET | `/shifts/schedule?date=...` | Any | Daily schedule with attendance, lateness and early-exit flags |
+| DELETE | `/shifts/assignments/{employee_id}` | HR/Admin | Remove a fixed shift |
+| POST | `/shifts/auto-process?date=...` | HR/Admin | Mark absences, recalculate late/early exits, skip approved leave |
+
+Late/early-exit checks use each employee’s shift window when assigned, otherwise
+the configured company hours. Time values are stored and compared in UTC.
+Automation is idempotent and can also run on a schedule when
+`AUTO_ATTENDANCE_ENABLED=true`.
+
+### Leave calendar
+
+| Method | Path | Access | Description |
+| ------ | ---- | ------ | ----------- |
+| GET | `/leave-calendar/?month=YYYY-MM` | Own/HR/Admin | Calendar entries; employees see their department |
+| GET | `/leave-calendar/team?date=...` | Any | Available teammates and people on leave for a day |
+| GET | `/leave-calendar/conflicts` | Any | Check concurrent approved leave for a department/date range |
+
+`MAX_CONCURRENT_DEPARTMENT_LEAVE` enables an optional overlap cap (default `0`
+disables it).
+
+### Documents
+
+| Method | Path | Access | Description |
+| ------ | ---- | ------ | ----------- |
+| POST | `/documents/upload` | Any | Multipart upload; employees may only upload to their own profile |
+| GET | `/documents/` | Own/HR/Admin | List documents with optional employee/type filters |
+| GET | `/documents/{id}` | Owner/HR/Admin | Document metadata |
+| GET | `/documents/{id}/download` | Owner/HR/Admin | Authenticated download (no public URL) |
+| DELETE | `/documents/{id}` | HR/Admin | Delete metadata and stored file |
+
+Uploads are validated by extension **and** magic bytes, capped at
+`MAX_DOCUMENT_SIZE_MB`, stored under `DOCUMENT_STORAGE_PATH` with random UUID
+filenames, and protected against path traversal. Set
+`ALLOWED_DOCUMENT_EXTENSIONS` to change the allow-list.
+
+### Performance
+
+| Method | Path | Access | Description |
+| ------ | ---- | ------ | ----------- |
+| POST | `/performance/` | HR/Admin | Publish a review (1–5 rating + feedback); notifies the employee |
+| GET | `/performance/` | Own/HR/Admin | Review list; employees only see their own |
+| GET | `/performance/summary/team` | HR/Admin | Average rating, distribution and department rollups |
+| GET | `/performance/summary/{employee_id}` | Own/HR/Admin | Per-employee rating summary |
+| GET | `/performance/{id}` | Owner/HR/Admin | Single review |
+| PATCH | `/performance/{id}` | HR/Admin | Update period, rating or feedback |
+| DELETE | `/performance/{id}` | HR/Admin | Delete a review |
+
+### Advanced analytics
+
+| Method | Path | Access | Description |
+| ------ | ---- | ------ | ----------- |
+| GET | `/analytics/report` | HR/Admin | Combined report: overview, attendance/leave trends, performance, departments |
+| GET | `/analytics/overview` | HR/Admin | Workforce KPIs for the filtered range |
+| GET | `/analytics/attendance-trends` | HR/Admin | Day/week/month attendance series |
+| GET | `/analytics/leave-trends` | HR/Admin | Monthly leave status series |
+| GET | `/analytics/performance-insights` | HR/Admin | Rating distribution and department averages |
+| GET | `/analytics/departments` | HR/Admin | Department headcount, attendance, leave and ratings |
+
+All analytics endpoints accept `start_date`, `end_date` (max 366 days) and
+`department`; trend endpoints also accept `granularity=day|week|month`.
+
 ### Payroll
 
 | Method | Path | Access | Description |
@@ -223,8 +314,24 @@ atomically.
 | GET | `/notifications/` | Any | Own notifications + unread count |
 | PATCH | `/notifications/{id}/read` | Owner | Mark as read |
 | PATCH | `/notifications/read-all` | Any | Mark all own notifications as read |
+| GET | `/notifications/alerts/summary` | HR/Admin | Unread, late-today, pending leave and expiring-document counters |
+| POST | `/notifications/alerts/late-attendance` | HR/Admin | Send deduplicated late-arrival reminders |
+| POST | `/notifications/alerts/document-expiry` | HR/Admin | Send deduplicated document-expiry reminders |
+| POST | `/notifications/alerts/run-all` | HR/Admin | Run every smart alert scan |
+
+Smart alerts use a per-user `dedupe_key`, so re-running a scan never sends the
+same reminder twice. The UI polls notifications and refreshes on the
+`worksphere:notifications` browser event.
 
 ## Database
+
+New in Phase 3:
+
+- `shifts(id, name, start_time, end_time, created_at)` — seeded MORNING 09:00–17:00, EVENING 14:00–22:00, NIGHT 22:00–06:00 (UTC)
+- `employee_shifts(id, employee_id, shift_id, assigned_at)` — one active shift per employee
+- `documents(id, employee_id, file_name, file_url, stored_name, content_type, file_size, document_type, expiry_date, uploaded_by_id, uploaded_at)`
+- `performance(id, employee_id, review_period, rating, feedback, reviewed_by_id, created_at)` — unique per employee/period
+- `attendance.shift_id` links a check-in to the shift active at the time
 
 New in Phase 2:
 
@@ -249,16 +356,21 @@ Existing tables continue unchanged: `users`, `employees`, `attendance`,
 - Role guards via `require_role([...])`; ownership checks on self-service endpoints.
 - Salary/payroll visible only to the owner, HR and ADMIN.
 - Pydantic validation with `extra="forbid"` on all write payloads.
+- Document uploads: extension allow-list, magic-byte sniffing, 10 MB cap,
+  UUID filenames, path-traversal guards and authenticated-only downloads.
+- Employees can only read their own documents, reviews and shift; HR/Admin
+  access is re-checked on every request.
 - Errors: 400 (business rules), 401 (auth), 403 (roles/ownership), 404 (missing), 422 (validation).
 
 ## Testing
 
 ```bash
-python tests/test_smoke.py        # 122 end-to-end checks against an isolated DB
+python tests/test_smoke.py        # 196 end-to-end checks against an isolated DB
 ```
 
-The suite covers every Phase 1 module plus RBAC, self-service, attendance
-controls, leave policies/balances, payroll breakdowns and admin analytics.
+The suite covers every Phase 1/2 module plus shifts and automation, the leave
+calendar, secure document upload/download, performance reviews, advanced
+analytics, smart alerts and advanced employee search.
 
 The frontend is type-checked and bundled with:
 

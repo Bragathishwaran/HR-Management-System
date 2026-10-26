@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import enum
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 
 from sqlalchemy import (
     Boolean,
@@ -14,6 +14,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Time,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -66,6 +67,19 @@ class LeaveStatus(str, enum.Enum):
     PENDING = "PENDING"
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
+
+
+class ShiftName(str, enum.Enum):
+    MORNING = "MORNING"
+    EVENING = "EVENING"
+    NIGHT = "NIGHT"
+
+
+class DocumentType(str, enum.Enum):
+    ID_PROOF = "ID_PROOF"
+    CERTIFICATE = "CERTIFICATE"
+    CONTRACT = "CONTRACT"
+    OTHER = "OTHER"
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +137,15 @@ class Employee(Base):
     leave_balances: Mapped[list["LeaveBalance"]] = relationship(
         back_populates="employee", cascade="all, delete-orphan"
     )
+    shift_assignment: Mapped["EmployeeShift | None"] = relationship(
+        back_populates="employee", uselist=False, cascade="all, delete-orphan"
+    )
+    documents: Mapped[list["Document"]] = relationship(
+        back_populates="employee", cascade="all, delete-orphan"
+    )
+    performance_reviews: Mapped[list["PerformanceReview"]] = relationship(
+        back_populates="employee", cascade="all, delete-orphan"
+    )
 
 
 class Attendance(Base):
@@ -146,8 +169,15 @@ class Attendance(Base):
     is_late: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     late_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     overtime_hours: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Module 14 — shift-aware attendance
+    shift_id: Mapped[int | None] = mapped_column(
+        ForeignKey("shifts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    is_early_exit: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    early_exit_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     employee: Mapped[Employee] = relationship(back_populates="attendance_records")
+    shift: Mapped["Shift | None"] = relationship(lazy="selectin")
 
 
 class Leave(Base):
@@ -236,6 +266,107 @@ class Notification(Base):
     title: Mapped[str] = mapped_column(String(150), nullable=False)
     message: Mapped[str] = mapped_column(String(500), nullable=False)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Module 19 — smart alert metadata / idempotency key
+    category: Mapped[str] = mapped_column(
+        String(40), default="GENERAL", nullable=False, index=True
+    )
+    dedupe_key: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
     user: Mapped[User] = relationship(back_populates="notifications")
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — automation, documents, performance
+# ---------------------------------------------------------------------------
+class Shift(Base):
+    """Module 14 — reusable shift definition."""
+
+    __tablename__ = "shifts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[ShiftName] = mapped_column(
+        sa_enum(ShiftName, "shift_name"), unique=True, nullable=False
+    )
+    start_time: Mapped[time] = mapped_column(Time, nullable=False)
+    end_time: Mapped[time] = mapped_column(Time, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+    assignments: Mapped[list["EmployeeShift"]] = relationship(back_populates="shift")
+
+
+class EmployeeShift(Base):
+    """Module 14 — an employee's currently assigned shift."""
+
+    __tablename__ = "employee_shifts"
+    __table_args__ = (
+        UniqueConstraint("employee_id", name="uq_employee_shift_employee"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("employees.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    shift_id: Mapped[int] = mapped_column(
+        ForeignKey("shifts.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    assigned_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+    employee: Mapped[Employee] = relationship(back_populates="shift_assignment")
+    shift: Mapped[Shift] = relationship(back_populates="assignments", lazy="selectin")
+
+
+class Document(Base):
+    """Module 16 — securely stored employee document metadata."""
+
+    __tablename__ = "documents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("employees.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    # Random on-disk name; never derived from user input.
+    stored_name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    content_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    document_type: Mapped[DocumentType] = mapped_column(
+        sa_enum(DocumentType, "document_type"),
+        nullable=False,
+        default=DocumentType.OTHER,
+    )
+    expiry_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    uploaded_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+    employee: Mapped[Employee] = relationship(back_populates="documents")
+    uploaded_by: Mapped["User | None"] = relationship(lazy="selectin")
+
+
+class PerformanceReview(Base):
+    """Module 17 — periodic performance review with historical feedback."""
+
+    __tablename__ = "performance"
+    __table_args__ = (
+        UniqueConstraint(
+            "employee_id", "review_period", name="uq_performance_employee_period"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("employees.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    review_period: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    rating: Mapped[int] = mapped_column(Integer, nullable=False)
+    feedback: Mapped[str] = mapped_column(String(2000), nullable=False)
+    reviewed_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+    employee: Mapped[Employee] = relationship(back_populates="performance_reviews")
+    reviewed_by: Mapped["User | None"] = relationship(lazy="selectin")
