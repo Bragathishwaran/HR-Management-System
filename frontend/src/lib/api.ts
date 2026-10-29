@@ -3,6 +3,7 @@ import type {
   AlertRunResponse,
   AnalyticsOverview,
   AnalyticsReport,
+  Announcement,
   AttendanceAnalyticsPoint,
   AttendanceRecord,
   AutoAttendanceResponse,
@@ -17,6 +18,9 @@ import type {
   EmployeePerformanceSummary,
   EmployeeSearchResponse,
   EmployeeShift,
+  Feedback,
+  FeedbackSummary,
+  InternalTask,
   Leave,
   LeaveBalance,
   LeaveCalendarEntry,
@@ -25,13 +29,18 @@ import type {
   LeaveStatus,
   NotificationAlertSummary,
   NotificationList,
+  NotificationPreferences,
+  OnboardingTask,
   Payroll,
   PayrollDetail,
   PayrollSummary,
   PerformanceReview,
+  ProfileInfo,
+  Resignation,
   SelfServiceDashboard,
   Shift,
   ShiftScheduleEntry,
+  TaskStatus,
   TeamAvailability,
   TeamPerformanceInsights,
   TokenResponse,
@@ -492,4 +501,60 @@ export const endpoints = {
   updateUser: (id: number, payload: Record<string, unknown>) =>
     api<User>(`/users/${id}`, { method: "PATCH", body: payload }),
   deleteUser: (id: number) => api<void>(`/users/${id}`, { method: "DELETE" }),
+
+  // Phase 4 - Onboarding
+  onboardingTasks: (params?: RequestOptions["params"]) =>
+    api<OnboardingTask[]>("/onboarding/", { params }),
+  createOnboardingTask: (payload: Record<string, unknown>) =>
+    api<OnboardingTask>("/onboarding/", { method: "POST", body: payload }),
+  updateOnboardingTask: (id: number, payload: Record<string, unknown>) =>
+    api<OnboardingTask>(`/onboarding/${id}`, { method: "PUT", body: payload }),
+  deleteOnboardingTask: (id: number) => api<void>(`/onboarding/${id}`, { method: "DELETE" }),
+  onboardingProgress: () => api<any>("/onboarding/me/progress"),
+
+  // Phase 4 - Resignations
+  resignations: () => api<Resignation[]>("/resignations/"),
+  submitResignation: (payload: Record<string, unknown>) =>
+    api<Resignation>("/resignations/", { method: "POST", body: payload }),
+  updateResignationStatus: (id: number, status: "APPROVED" | "REJECTED") =>
+    api<Resignation>(`/resignations/${id}/status`, { method: "PUT", body: { status } }),
+
+  // Phase 4 - Announcements
+  announcements: () => api<Announcement[]>("/announcements/"),
+  createAnnouncement: (payload: Record<string, unknown>) =>
+    api<Announcement>("/announcements/", { method: "POST", body: payload }),
+  getAnnouncement: (id: number) => api<Announcement>(`/announcements/${id}`),
+  deleteAnnouncement: (id: number) => api<void>(`/announcements/${id}`, { method: "DELETE" }),
+
+  // Phase 4 - Tasks
+  internalTasks: (params?: RequestOptions["params"]) =>
+    api<InternalTask[]>("/tasks/", { params }),
+  assignTask: (payload: Record<string, unknown>) =>
+    api<InternalTask>("/tasks/", { method: "POST", body: payload }),
+  updateTaskStatus: (id: number, status: TaskStatus) =>
+    api<InternalTask>(`/tasks/${id}/status`, { method: "PUT", body: { status } }),
+
+  // Phase 4 - Feedback
+  submitFeedback: (payload: Record<string, unknown>) =>
+    api<Feedback>("/feedback/", { method: "POST", body: payload }),
+  feedbackList: () => api<Feedback[]>("/feedback/"),
+  feedbackSummary: () => api<FeedbackSummary>("/feedback/summary"),
+
+  // Phase 4 - Integrations
+  sendEmail: (payload: Record<string, unknown>) =>
+    api<{ detail: string }>("/integrations/email/send", { method: "POST", body: payload }),
+  calendarSync: (payload: Record<string, unknown>) =>
+    api<any>("/integrations/calendar/sync", { method: "POST", body: payload }),
+  exportReport: (payload: Record<string, unknown>) =>
+    api<any>("/integrations/export", { method: "POST", body: payload }),
+
+  // Phase 4 - Profile & Settings
+  profileMe: () => api<ProfileInfo>("/profile/me"),
+  updateProfileMe: (payload: Record<string, unknown>) =>
+    api<any>("/profile/me", { method: "PUT", body: payload }),
+  changePassword: (payload: Record<string, unknown>) =>
+    api<{ detail: string }>("/profile/change-password", { method: "PUT", body: payload }),
+  getPreferences: () => api<NotificationPreferences>("/profile/preferences"),
+  updatePreferences: (payload: Record<string, unknown>) =>
+    api<NotificationPreferences>("/profile/preferences", { method: "PUT", body: payload }),
 };

@@ -13,17 +13,24 @@ from app.config import settings
 from app.database import AsyncSessionLocal, init_db
 from app.routers import (
     analytics,
+    announcements,
     attendance,
     auth,
     dashboard,
     documents,
     employees,
+    feedback,
+    internal_tasks,
+    integrations,
     leave_calendar,
     leave_policies,
     leaves,
     notifications,
+    onboarding,
     payroll,
     performance,
+    profile_settings,
+    resignations,
     self_service,
     shifts,
     users,
@@ -68,7 +75,8 @@ app = FastAPI(
         "Role-driven HRMS backend: RBAC, Employee Self-Service, Attendance "
         "controls, Leave policies/balances, Payroll breakdowns, Admin user "
         "management, Dashboard analytics, Notifications, shift automation, "
-        "document management, performance reviews and advanced analytics."
+        "document management, performance reviews, advanced analytics, "
+        "onboarding, resignations, announcements, tasks, feedback, integrations and profile settings."
     ),
     lifespan=lifespan,
 )
@@ -98,6 +106,13 @@ app.include_router(payroll.router)
 app.include_router(dashboard.router)
 app.include_router(analytics.router)
 app.include_router(notifications.router)
+app.include_router(onboarding.router)
+app.include_router(resignations.router)
+app.include_router(announcements.router)
+app.include_router(internal_tasks.router)
+app.include_router(feedback.router)
+app.include_router(integrations.router)
+app.include_router(profile_settings.router)
 
 
 @app.exception_handler(Exception)
@@ -122,3 +137,18 @@ async def root() -> dict:
 @app.get("/health", tags=["Health"], summary="Health check")
 async def health() -> dict:
     return {"status": "ok"}
+
+
+@app.get("/v1/models", tags=["Models"], summary="List available models")
+async def list_models() -> dict:
+    """Return the models exposed through the OpenAI-compatible API surface."""
+    return {
+        "object": "list",
+        "data": [
+            {
+                "id": "your-model-name",
+                "object": "model",
+                "owned_by": "organization-owner",
+            }
+        ],
+    }

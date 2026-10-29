@@ -20,7 +20,10 @@ from app.models import (
     EmployeeStatus,
     LeaveStatus,
     LeaveType,
+    OnboardingStatus,
+    ResignationStatus,
     ShiftName,
+    TaskStatus,
     UserRole,
 )
 
@@ -757,6 +760,218 @@ class EmployeeFacets(BaseModel):
     designations: list[str]
     roles: list[UserRole]
     shifts: list[ShiftRead]
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Onboarding
+# ---------------------------------------------------------------------------
+class OnboardingTaskCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    employee_id: int = Field(gt=0)
+    task_name: str = Field(min_length=2, max_length=255)
+    due_date: date
+    status: OnboardingStatus = OnboardingStatus.PENDING
+
+
+class OnboardingTaskUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task_name: Optional[str] = Field(default=None, min_length=2, max_length=255)
+    due_date: Optional[date] = None
+    status: Optional[OnboardingStatus] = None
+
+
+class OnboardingTaskRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    employee_id: int
+    task_name: str
+    status: OnboardingStatus
+    due_date: date
+    employee_name: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Resignations
+# ---------------------------------------------------------------------------
+class ResignationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=3, max_length=2000)
+    notice_period: str = Field(min_length=1, max_length=80)
+
+
+class ResignationStatusUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: ResignationStatus
+
+    @model_validator(mode="after")
+    def only_approve_or_reject(self) -> "ResignationStatusUpdate":
+        if self.status not in (ResignationStatus.APPROVED, ResignationStatus.REJECTED):
+            raise ValueError("status must be APPROVED or REJECTED")
+        return self
+
+
+class ResignationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    employee_id: int
+    reason: str
+    notice_period: str
+    status: ResignationStatus
+    created_at: datetime
+    employee_name: Optional[str] = None
+    department: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Announcements
+# ---------------------------------------------------------------------------
+class AnnouncementCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=2, max_length=200)
+    message: str = Field(min_length=2, max_length=4000)
+
+
+class AnnouncementRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    title: str
+    message: str
+    created_by_id: int
+    created_at: datetime
+    created_by: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Internal Tasks
+# ---------------------------------------------------------------------------
+class InternalTaskCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    assigned_to_id: int = Field(gt=0)
+    title: str = Field(min_length=2, max_length=200)
+    description: str = Field(min_length=2, max_length=2000)
+    due_date: date
+
+
+class InternalTaskUpdateStatus(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: TaskStatus
+
+
+class InternalTaskRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    assigned_to_id: int
+    assigned_by_id: Optional[int] = None
+    title: str
+    description: str
+    due_date: date
+    status: TaskStatus
+    created_at: datetime
+    assigned_to_name: Optional[str] = None
+    assigned_by_name: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Feedback
+# ---------------------------------------------------------------------------
+class FeedbackCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message: str = Field(min_length=3, max_length=2000)
+    rating: int = Field(ge=1, le=5)
+    is_anonymous: bool = False
+
+
+class FeedbackRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    employee_id: Optional[int] = None
+    message: str
+    rating: int
+    is_anonymous: bool
+    created_at: datetime
+    employee_name: Optional[str] = None
+
+
+class FeedbackSummary(BaseModel):
+    total: int
+    average_rating: float
+    rating_distribution: dict[str, int]
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Integrations / Exports
+# ---------------------------------------------------------------------------
+class EmailNotificationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    to_email: EmailStr
+    subject: str = Field(min_length=2, max_length=200)
+    message: str = Field(min_length=2, max_length=4000)
+
+
+class CalendarSyncRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str = Field(min_length=2, max_length=50)
+    calendar_id: Optional[str] = Field(default=None, max_length=200)
+    sync_enabled: bool = True
+
+
+class CalendarSyncResponse(BaseModel):
+    status: str
+    provider: str
+    message: str
+
+
+class ExportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    format: str = Field(pattern="^(csv|pdf)$")
+    report_type: str = Field(min_length=2, max_length=50)
+    filters: dict | None = None
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Profile & Settings
+# ---------------------------------------------------------------------------
+class ProfileUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    full_name: Optional[str] = Field(default=None, min_length=2, max_length=120)
+    designation: Optional[str] = Field(default=None, min_length=2, max_length=120)
+    department: Optional[str] = Field(default=None, min_length=2, max_length=120)
+
+
+class ChangePasswordRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: str = Field(min_length=8, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class NotificationPreferences(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email_notifications: bool = True
+    sms_notifications: bool = False
+    push_notifications: bool = True
+
+
+class NotificationPreferencesRead(NotificationPreferences):
+    user_id: int
 
 
 # ---------------------------------------------------------------------------

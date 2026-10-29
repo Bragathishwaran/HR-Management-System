@@ -270,6 +270,35 @@ export function PageHeader({
   );
 }
 
+export function Card({
+  title,
+  subtitle,
+  action,
+  children,
+  className = "",
+}: {
+  title?: string;
+  subtitle?: string;
+  action?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <section className={`card ${className}`.trim()}>
+      {(title || subtitle || action) && (
+        <div className="card-heading">
+          <div>
+            {title && <h2>{title}</h2>}
+            {subtitle && <p>{subtitle}</p>}
+          </div>
+          {action && <div>{action}</div>}
+        </div>
+      )}
+      {children}
+    </section>
+  );
+}
+
 export function StatCard({
   label,
   value,

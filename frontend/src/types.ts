@@ -467,3 +467,87 @@ export interface EmployeeFacets {
   roles: Role[];
   shifts: Shift[];
 }
+
+// ---------------------------------------------------------------------------
+// Phase 4 — Employee Experience & System Integrations
+// ---------------------------------------------------------------------------
+export type OnboardingStatus = "PENDING" | "COMPLETED";
+export type ResignationStatus = "PENDING" | "APPROVED" | "REJECTED";
+export type TaskStatus = "PENDING" | "COMPLETED";
+
+export interface OnboardingTask {
+  id: number;
+  employee_id: number;
+  task_name: string;
+  status: OnboardingStatus;
+  due_date: string;
+  employee_name: string | null;
+}
+
+export interface Resignation {
+  id: number;
+  employee_id: number;
+  reason: string;
+  notice_period: string;
+  status: ResignationStatus;
+  created_at: string;
+  employee_name: string | null;
+  department: string | null;
+}
+
+export interface Announcement {
+  id: number;
+  title: string;
+  message: string;
+  created_by_id: number;
+  created_at: string;
+  created_by: string | null;
+}
+
+export interface InternalTask {
+  id: number;
+  assigned_to_id: number;
+  assigned_by_id: number | null;
+  title: string;
+  description: string;
+  due_date: string;
+  status: TaskStatus;
+  created_at: string;
+  assigned_to_name: string | null;
+  assigned_by_name: string | null;
+}
+
+export interface Feedback {
+  id: number;
+  employee_id: number | null;
+  message: string;
+  rating: number;
+  is_anonymous: boolean;
+  created_at: string;
+  employee_name: string | null;
+}
+
+export interface FeedbackSummary {
+  total: number;
+  average_rating: number;
+  rating_distribution: Record<string, number>;
+}
+
+export interface ProfileInfo {
+  user: { id: number; username: string; email: string; role: Role };
+  employee: {
+    id: number;
+    full_name: string;
+    designation: string;
+    department: string;
+    joining_date: string;
+    status: EmployeeStatus;
+  } | null;
+}
+
+export interface NotificationPreferences {
+  user_id: number;
+  email_notifications: boolean;
+  sms_notifications: boolean;
+  push_notifications: boolean;
+}

@@ -82,6 +82,22 @@ class DocumentType(str, enum.Enum):
     OTHER = "OTHER"
 
 
+class OnboardingStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    COMPLETED = "COMPLETED"
+
+
+class ResignationStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
+class TaskStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    COMPLETED = "COMPLETED"
+
+
 # ---------------------------------------------------------------------------
 # Tables
 # ---------------------------------------------------------------------------
@@ -103,6 +119,18 @@ class User(Base):
     )
     notifications: Mapped[list["Notification"]] = relationship(
         back_populates="user", cascade="all, delete-orphan", lazy="selectin"
+    )
+    announcements_created: Mapped[list["Announcement"]] = relationship(
+        back_populates="created_by_user", lazy="selectin"
+    )
+    tasks_assigned_by: Mapped[list["InternalTask"]] = relationship(
+        back_populates="assigned_by_user", lazy="selectin"
+    )
+    documents_uploaded: Mapped[list["Document"]] = relationship(
+        back_populates="uploaded_by", lazy="selectin"
+    )
+    reviews_given: Mapped[list["PerformanceReview"]] = relationship(
+        back_populates="reviewed_by", lazy="selectin"
     )
 
 
@@ -144,6 +172,18 @@ class Employee(Base):
         back_populates="employee", cascade="all, delete-orphan"
     )
     performance_reviews: Mapped[list["PerformanceReview"]] = relationship(
+        back_populates="employee", cascade="all, delete-orphan"
+    )
+    onboarding_tasks: Mapped[list["OnboardingTask"]] = relationship(
+        back_populates="employee", cascade="all, delete-orphan"
+    )
+    resignations: Mapped[list["Resignation"]] = relationship(
+        back_populates="employee", cascade="all, delete-orphan"
+    )
+    assigned_tasks: Mapped[list["InternalTask"]] = relationship(
+        back_populates="assigned_to_employee", cascade="all, delete-orphan"
+    )
+    feedback_entries: Mapped[list["Feedback"]] = relationship(
         back_populates="employee", cascade="all, delete-orphan"
     )
 
@@ -343,7 +383,9 @@ class Document(Base):
     uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
     employee: Mapped[Employee] = relationship(back_populates="documents")
-    uploaded_by: Mapped["User | None"] = relationship(lazy="selectin")
+    uploaded_by: Mapped["User | None"] = relationship(
+        back_populates="documents_uploaded", lazy="selectin"
+    )
 
 
 class PerformanceReview(Base):
@@ -369,4 +411,115 @@ class PerformanceReview(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
     employee: Mapped[Employee] = relationship(back_populates="performance_reviews")
-    reviewed_by: Mapped["User | None"] = relationship(lazy="selectin")
+    reviewed_by: Mapped["User | None"] = relationship(
+        back_populates="reviews_given", lazy="selectin"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Employee Experience & System Integrations
+# ---------------------------------------------------------------------------
+
+
+class OnboardingTask(Base):
+    """Module 21 — Employee onboarding checklist tasks."""
+
+    __tablename__ = "onboarding"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("employees.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    task_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[OnboardingStatus] = mapped_column(
+        sa_enum(OnboardingStatus, "onboarding_status"),
+        nullable=False,
+        default=OnboardingStatus.PENDING,
+    )
+    due_date: Mapped[date] = mapped_column(Date, nullable=False)
+
+    employee: Mapped[Employee] = relationship(back_populates="onboarding_tasks")
+
+
+class Resignation(Base):
+    """Module 22 — Resignation & exit management."""
+
+    __tablename__ = "resignations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("employees.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    reason: Mapped[str] = mapped_column(String(2000), nullable=False)
+    notice_period: Mapped[str] = mapped_column(String(80), nullable=False)
+    status: Mapped[ResignationStatus] = mapped_column(
+        sa_enum(ResignationStatus, "resignation_status"),
+        nullable=False,
+        default=ResignationStatus.PENDING,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+    employee: Mapped[Employee] = relationship(back_populates="resignations")
+
+
+class Announcement(Base):
+    """Module 23 — Internal announcements system."""
+
+    __tablename__ = "announcements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    message: Mapped[str] = mapped_column(String(4000), nullable=False)
+    created_by_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+    created_by_user: Mapped[User] = relationship(
+        back_populates="announcements_created", lazy="selectin"
+    )
+
+
+class InternalTask(Base):
+    """Module 24 — Task assignment & tracking."""
+
+    __tablename__ = "tasks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    assigned_to_id: Mapped[int] = mapped_column(
+        ForeignKey("employees.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    assigned_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(String(2000), nullable=False)
+    due_date: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[TaskStatus] = mapped_column(
+        sa_enum(TaskStatus, "task_status"), nullable=False, default=TaskStatus.PENDING
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+    assigned_to_employee: Mapped[Employee] = relationship(
+        back_populates="assigned_tasks"
+    )
+    assigned_by_user: Mapped["User | None"] = relationship(
+        back_populates="tasks_assigned_by", lazy="selectin"
+    )
+
+
+class Feedback(Base):
+    """Module 26 — Employee feedback system."""
+
+    __tablename__ = "feedback"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    employee_id: Mapped[int | None] = mapped_column(
+        ForeignKey("employees.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    message: Mapped[str] = mapped_column(String(2000), nullable=False)
+    rating: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_anonymous: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+    employee: Mapped["Employee | None"] = relationship(back_populates="feedback_entries")

@@ -3,21 +3,27 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   ArrowUpRight,
   Bell,
+  Briefcase,
   CalendarClock,
   CalendarDays,
   CalendarRange,
   ChartNoAxesCombined,
   ChevronDown,
+  ClipboardList,
   Clock3,
   FileText,
   LayoutDashboard,
   LogOut,
+  Megaphone,
   Menu,
+  MessageSquare,
   ScrollText,
+  Settings,
   Star,
   UserCog,
   UserRound,
   Users,
+  UserX,
   WalletCards,
   X,
   type LucideIcon,
@@ -45,17 +51,24 @@ const workspaceItems: NavItem[] = [
   { to: "/documents", label: "Documents", icon: FileText },
   { to: "/performance", label: "Performance", icon: Star },
   { to: "/payroll", label: "Payroll", icon: WalletCards },
+  { to: "/announcements", label: "Announcements", icon: Megaphone },
+  { to: "/tasks", label: "My Tasks", icon: ClipboardList },
+  { to: "/onboarding", label: "Onboarding", icon: Briefcase },
+  { to: "/resignations", label: "Resignations", icon: UserX },
+  { to: "/feedback", label: "Feedback", icon: MessageSquare },
 ];
 
 const managementItems: NavItem[] = [
   { to: "/leave-policies", label: "Leave policies", icon: ScrollText, roles: ["HR", "ADMIN"] },
   { to: "/analytics", label: "Analytics", icon: ChartNoAxesCombined, roles: ["HR", "ADMIN"] },
   { to: "/users", label: "User access", icon: UserCog, roles: ["ADMIN"] },
+  { to: "/integrations", label: "Integrations", icon: Settings, roles: ["HR", "ADMIN"] },
 ];
 
 const accountItems: NavItem[] = [
   { to: "/notifications", label: "Notifications", icon: Bell },
   { to: "/profile", label: "My profile", icon: UserRound },
+  { to: "/profile-settings", label: "Settings", icon: Settings },
 ];
 
 const pageTitles: Array<{ prefix: string; title: string }> = [
@@ -68,6 +81,13 @@ const pageTitles: Array<{ prefix: string; title: string }> = [
   { prefix: "/documents", title: "Documents" },
   { prefix: "/performance", title: "Performance" },
   { prefix: "/payroll", title: "Payroll" },
+  { prefix: "/announcements", title: "Announcements" },
+  { prefix: "/tasks", title: "Tasks" },
+  { prefix: "/onboarding", title: "Onboarding" },
+  { prefix: "/resignations", title: "Resignations" },
+  { prefix: "/feedback", title: "Feedback" },
+  { prefix: "/integrations", title: "Integrations" },
+  { prefix: "/profile-settings", title: "Settings" },
   { prefix: "/leave-policies", title: "Leave policies" },
   { prefix: "/analytics", title: "Analytics" },
   { prefix: "/users", title: "User access" },
