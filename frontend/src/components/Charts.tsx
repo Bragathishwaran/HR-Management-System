@@ -19,20 +19,20 @@ import {
 import { formatCurrency } from "../lib/format";
 
 export const chartColors = {
-  green: "#249f72",
-  lime: "#b6e85f",
-  amber: "#f1b84b",
-  blue: "#5d8ee8",
-  purple: "#9272d6",
-  rose: "#df7e91",
-  teal: "#31b4a3",
-  slate: "#dce5e1",
+  green: "#0e6b4f",
+  lime: "#c9a86a",
+  amber: "#c08a3e",
+  blue: "#526f9e",
+  purple: "#7a669c",
+  rose: "#b76270",
+  teal: "#1c8a7f",
+  slate: "#e3dfd5",
 };
 
 const tooltipStyle = {
-  border: "1px solid #e2e9e5",
+  border: "1px solid #e8e5de",
   borderRadius: 12,
-  boxShadow: "0 10px 30px rgba(18, 40, 32, 0.09)",
+  boxShadow: "0 10px 30px rgba(24, 26, 22, 0.1)",
   fontSize: 12,
   padding: "10px 12px",
   background: "#ffffff",
@@ -123,7 +123,7 @@ export function DonutChart({
               cy="50%"
               innerRadius="65%"
               outerRadius="92%"
-              fill="#edf2ef"
+              fill="#ece9e1"
               stroke="none"
             />
           )}
@@ -153,18 +153,18 @@ export function PayrollAreaChart({
             <stop offset="100%" stopColor={chartColors.green} stopOpacity={0} />
           </linearGradient>
         </defs>
-        <CartesianGrid strokeDasharray="3 5" vertical={false} stroke="#e8eeeb" />
+        <CartesianGrid strokeDasharray="3 5" vertical={false} stroke="#ebe8e0" />
         <XAxis
           dataKey="month"
           tickLine={false}
           axisLine={false}
-          tick={{ fontSize: 11, fill: "#82928c" }}
+          tick={{ fontSize: 11, fill: "#8a938d" }}
           tickFormatter={(value: string) => value.split("-")[0]?.slice(0, 3)}
         />
         <YAxis
           tickLine={false}
           axisLine={false}
-          tick={{ fontSize: 11, fill: "#82928c" }}
+          tick={{ fontSize: 11, fill: "#8a938d" }}
           tickFormatter={(value: number) => formatCurrency(value, true)}
           width={58}
         />
@@ -196,13 +196,13 @@ export function DepartmentBarChart({
   return (
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={data} layout="vertical" margin={{ top: 0, right: 18, left: 6, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 5" horizontal={false} stroke="#e8eeeb" />
+        <CartesianGrid strokeDasharray="3 5" horizontal={false} stroke="#ebe8e0" />
         <XAxis
           type="number"
           allowDecimals={false}
           tickLine={false}
           axisLine={false}
-          tick={{ fontSize: 11, fill: "#82928c" }}
+          tick={{ fontSize: 11, fill: "#8a938d" }}
         />
         <YAxis
           type="category"
@@ -210,9 +210,9 @@ export function DepartmentBarChart({
           tickLine={false}
           axisLine={false}
           width={105}
-          tick={{ fontSize: 11, fill: "#516660" }}
+          tick={{ fontSize: 11, fill: "#5a6660" }}
         />
-        <Tooltip contentStyle={tooltipStyle} cursor={{ fill: "#f4f8f5" }} />
+        <Tooltip contentStyle={tooltipStyle} cursor={{ fill: "#f4f2ec" }} />
         <Bar dataKey="count" radius={[0, 8, 8, 0]} fill={chartColors.green} barSize={18} />
       </BarChart>
     </ResponsiveContainer>
@@ -238,7 +238,7 @@ export function UserRoleChart({
         <Legend
           iconType="circle"
           iconSize={8}
-          wrapperStyle={{ fontSize: 12, color: "#516660" }}
+          wrapperStyle={{ fontSize: 12, color: "#5a6660" }}
         />
       </PieChart>
     </ResponsiveContainer>
@@ -267,19 +267,19 @@ export function AttendanceTrendChart({
             <stop offset="100%" stopColor={chartColors.green} stopOpacity={0} />
           </linearGradient>
         </defs>
-        <CartesianGrid strokeDasharray="3 5" vertical={false} stroke="#e8eeeb" />
+        <CartesianGrid strokeDasharray="3 5" vertical={false} stroke="#ebe8e0" />
         <XAxis
           dataKey="label"
           tickLine={false}
           axisLine={false}
-          tick={{ fontSize: 11, fill: "#82928c" }}
+          tick={{ fontSize: 11, fill: "#8a938d" }}
           minTickGap={18}
         />
         <YAxis
           allowDecimals={false}
           tickLine={false}
           axisLine={false}
-          tick={{ fontSize: 11, fill: "#82928c" }}
+          tick={{ fontSize: 11, fill: "#8a938d" }}
           width={38}
         />
         <Tooltip contentStyle={tooltipStyle} />
@@ -327,22 +327,22 @@ export function LeaveTrendChart({
   return (
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={data} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 5" vertical={false} stroke="#e8eeeb" />
+        <CartesianGrid strokeDasharray="3 5" vertical={false} stroke="#ebe8e0" />
         <XAxis
           dataKey="label"
           tickLine={false}
           axisLine={false}
-          tick={{ fontSize: 11, fill: "#82928c" }}
+          tick={{ fontSize: 11, fill: "#8a938d" }}
           minTickGap={14}
         />
         <YAxis
           allowDecimals={false}
           tickLine={false}
           axisLine={false}
-          tick={{ fontSize: 11, fill: "#82928c" }}
+          tick={{ fontSize: 11, fill: "#8a938d" }}
           width={34}
         />
-        <Tooltip contentStyle={tooltipStyle} cursor={{ fill: "#f4f8f5" }} />
+        <Tooltip contentStyle={tooltipStyle} cursor={{ fill: "#f4f2ec" }} />
         <Bar dataKey="approved" name="Approved" stackId="leave" fill={chartColors.green} radius={[0, 0, 0, 0]} />
         <Bar dataKey="pending" name="Pending" stackId="leave" fill={chartColors.amber} />
         <Bar dataKey="rejected" name="Rejected" stackId="leave" fill={chartColors.rose} radius={[6, 6, 0, 0]} />

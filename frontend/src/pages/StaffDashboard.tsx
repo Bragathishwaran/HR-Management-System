@@ -208,25 +208,25 @@ export function StaffDashboard() {
           </div>
           <ResponsiveContainer width="100%" height={250}>
             <BarChart data={trends.attendance_trend} barGap={4} margin={{ top: 12, right: 8, left: -20, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 5" vertical={false} stroke="#e8eeeb" />
+              <CartesianGrid strokeDasharray="3 5" vertical={false} stroke="#ebe8e0" />
               <XAxis
                 dataKey="date"
                 tickLine={false}
                 axisLine={false}
-                tick={{ fontSize: 11, fill: "#82928c" }}
+                tick={{ fontSize: 11, fill: "#8a938d" }}
                 tickFormatter={weekDay}
               />
               <YAxis
                 allowDecimals={false}
                 tickLine={false}
                 axisLine={false}
-                tick={{ fontSize: 11, fill: "#82928c" }}
+                tick={{ fontSize: 11, fill: "#8a938d" }}
               />
               <Tooltip
                 contentStyle={{
-                  border: "1px solid #e2e9e5",
+                  border: "1px solid #e8e5de",
                   borderRadius: 12,
-                  boxShadow: "0 10px 30px rgba(18, 40, 32, 0.09)",
+                  boxShadow: "0 10px 30px rgba(24, 26, 22, 0.1)",
                   fontSize: 12,
                 }}
                 labelFormatter={(label: string) => formatDate(label)}

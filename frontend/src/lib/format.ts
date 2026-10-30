@@ -197,17 +197,17 @@ export function downloadPayslip(payslip: {
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><title>Payslip ${payslip.month} - ${name}</title>
 <style>
-  body{font-family:Inter,Arial,sans-serif;color:#12211c;padding:48px;max-width:760px;margin:auto}
-  .top{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #12211c;padding-bottom:24px}
-  h1{margin:0;font-size:28px;letter-spacing:-.04em} .brand{font-size:13px;letter-spacing:.18em;text-transform:uppercase;color:#557067}
+  body{font-family:Inter,Arial,sans-serif;color:#161f1b;padding:48px;max-width:760px;margin:auto}
+  .top{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #161f1b;padding-bottom:24px}
+  h1{margin:0;font-size:28px;letter-spacing:-.04em} .brand{font-size:13px;letter-spacing:.18em;text-transform:uppercase;color:#6d7a72}
   .meta{display:grid;grid-template-columns:1fr 1fr;gap:8px 32px;margin:28px 0;font-size:14px}
-  .meta span{color:#6b7d77} .meta b{display:block;color:#12211c;margin-top:2px}
-  table{width:100%;border-collapse:collapse;font-size:14px} td{padding:12px 0;border-bottom:1px solid #e6ece9}
+  .meta span{color:#6b756f} .meta b{display:block;color:#161f1b;margin-top:2px}
+  table{width:100%;border-collapse:collapse;font-size:14px} td{padding:12px 0;border-bottom:1px solid #e8e5de}
   td:last-child{text-align:right;font-variant-numeric:tabular-nums}
   .net td{font-weight:700;font-size:18px;border-bottom:0;padding-top:22px}
-  .foot{margin-top:48px;font-size:11px;color:#87958f}
+  .foot{margin-top:48px;font-size:11px;color:#8a938d}
 </style></head><body>
-<div class="top"><div><div class="brand">WorkSphere</div><h1>Salary slip</h1></div><div style="text-align:right"><b>${payslip.month}</b><div style="font-size:12px;color:#6b7d77">Slip #${String(payslip.id).padStart(5, "0")}</div></div></div>
+<div class="top"><div><div class="brand">WorkSphere</div><h1>Salary slip</h1></div><div style="text-align:right"><b>${payslip.month}</b><div style="font-size:12px;color:#6b756f">Slip #${String(payslip.id).padStart(5, "0")}</div></div></div>
 <div class="meta">
   <div><span>Employee</span><b>${name}</b></div>
   <div><span>Department</span><b>${payslip.department || "—"}</b></div>
